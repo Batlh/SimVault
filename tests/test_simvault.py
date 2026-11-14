@@ -529,10 +529,11 @@ class ArchiveTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def _search(self, tools):
+    def _search(self, tools, keep_hits=True):
         work = os.path.join(self.tmp, "work")
         os.makedirs(work, exist_ok=True)
-        return cc_finder.search([self.fund], {MISSING_CAS, MISSING_OBJ}, work_dir=work, tools=tools), work
+        return cc_finder.search([self.fund], {MISSING_CAS, MISSING_OBJ}, work_dir=work, tools=tools,
+                                keep_hits=keep_hits), work
 
     def check_tool(self, tools):
         (hits, unreadable), work = self._search(tools)
@@ -540,9 +541,9 @@ class ArchiveTests(unittest.TestCase):
         by_entry = {h["archiv_eintrag"].replace("\\", "/"): h for h in hits}
         self.assertEqual(set(by_entry), {"Mods/Haare/Ivka_Hair.package", "Moebel.zip → Sofa.package"})
         self.assertTrue(all(h["pfad"] == self.archive for h in hits))
-        # nichts Irrelevantes entpackt
-        extracted = [f for _r, _d, fs in os.walk(work) for f in fs]
-        self.assertNotIn("riesig.bin", extracted)
+        # im Temp-Ordner liegen danach nur noch die beiden Funde – nichts sonst
+        extracted = sorted(f for _r, _d, fs in os.walk(work) for f in fs)
+        self.assertEqual(extracted, ["Ivka_Hair.package", "Sofa.package"])
         # Zurückholen aus dem Temp-Ordner
         parts = [{"id": f"0x{MISSING_CAS:016X}", "art": "Haare (Steckplatz 2)", "verwendet_von": []},
                  {"id": f"0x{MISSING_OBJ:016X}", "art": "Objekt", "verwendet_von": []}]
@@ -558,10 +559,32 @@ class ArchiveTests(unittest.TestCase):
     def test_bsdtar(self):
         self.check_tool([("bsdtar", shutil.which("bsdtar"))])
 
+    def test_without_restore_temp_stays_empty(self):
+        (hits, _), work = self._search([("7z", shutil.which("7z"))], keep_hits=False)
+        self.assertEqual(len(hits), 2)
+        self.assertEqual([f for _r, _d, fs in os.walk(work) for f in fs], [])   # nichts liegen geblieben
+        self.assertEqual(os.listdir(work), [])
+
+    def test_low_disk_space_skips_archive(self):
+        from unittest import mock
+        with mock.patch.object(cc_finder, "FREE_SPACE_RESERVE", 10 ** 18):
+            (hits, unreadable), work = self._search([("7z", shutil.which("7z"))])
+        self.assertEqual(hits, [])
+        self.assertIn("Speicherplatz", unreadable[0]["grund"])
+        self.assertEqual(os.listdir(work), [])
+
+    def test_stale_temp_cleanup(self):
+        base = os.path.join(self.tmp, "tempbase")
+        old = os.path.join(base, cc_finder.TEMP_PREFIX + "alt")
+        new = os.path.join(base, cc_finder.TEMP_PREFIX + "neu")
+        os.makedirs(old)
+        os.makedirs(new)
+        os.utime(old, (0, 0))
+        self.assertEqual(cc_finder.cleanup_stale_temp(base), 1)
+        self.assertEqual(os.listdir(base), [cc_finder.TEMP_PREFIX + "neu"])
+
     def test_restore_without_temp_reextracts(self):
-        (hits, _), _work = self._search([("7z", shutil.which("7z"))])
-        for h in hits:
-            h.pop("temp_datei", None)
+        (hits, _), _work = self._search([("7z", shutil.which("7z"))], keep_hits=False)
         hits = [h for h in hits if "Ivka" in h["archiv_eintrag"]]
         found, _ = cc_finder.summarize(hits, [{"id": f"0x{MISSING_CAS:016X}", "art": "Haare", "verwendet_von": []}])
         created = cc_finder.restore(found, os.path.join(self.tmp, "Mods3"))

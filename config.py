@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
     "search_drives": True,      # "find" durchsucht zusätzlich alle weiteren Laufwerke (D:, E:, USB …)
     "extractor": "",            # Entpacker für RAR/7z: leer = automatisch, Pfad zu 7z.exe/UnRAR.exe/tar.exe, "none" = aus
     "max_archive_mb": 4096,     # größere Archive werden bei der Suche übersprungen
+    "temp_folder": "",          # Temp-Ordner fürs kurze Entpacken (leer = System-Temp, z. B. auf D: legen)
     "backup_folder": "./backups",
     "backup_mode": "full",      # full, delta, selective
     "report_folder": "./reports",

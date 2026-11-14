@@ -39,6 +39,10 @@ which Custom Content you actually use, what is broken, and what can go.
   RAR/7z are briefly unpacked to a temp folder (only packages and nested archives), searched and cleaned up,
   using 7-Zip, WinRAR (UnRAR) or the `tar` built into Windows 10/11 — choose which in `setup`.
   Password-protected, broken or very large archives are reported with the reason.
+  Disk space: every archive is deleted from the temp folder right after it was checked — found or not.
+  Only with `--restore` the found packages themselves stay until they are copied. Before unpacking,
+  free space is checked; leftovers of aborted runs are removed on the next start; ZIPs are read streamed.
+  The temp folder can be moved to another drive with `temp_folder` in `config.json`.
   `--ganzer-pc` also scans the whole C: drive.
   With `--restore` the found packages are copied to `Mods/SimVault_wiederhergestellt` (nothing is overwritten);
   `--ohne TEXT` leaves out finds whose name or location contains TEXT. The same file found in several places

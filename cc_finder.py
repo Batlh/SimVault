@@ -105,150 +105,214 @@ def _ids_in_entries(entries, wanted):
     return {e.instance for e in entries if e.instance in wanted}
 
 
-def search(folders, wanted, exclude=(), progress=None, work_dir=None, tools=None, max_archive_mb=4096):
+TEMP_PREFIX = "simvault_fund_"
+FREE_SPACE_RESERVE = 1024 ** 3   # mindestens 1 GB frei lassen
+STALE_TEMP_SECONDS = 30 * 60
+
+
+def cleanup_stale_temp(base=None):
+    """Löscht Temp-Ordner früherer, abgebrochener Suchläufe (älter als 30 Minuten)."""
+    import time
+    base = base or tempfile.gettempdir()
+    removed = 0
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return 0
+    for name in names:
+        path = os.path.join(base, name)
+        if name.startswith(TEMP_PREFIX) and os.path.isdir(path):
+            try:
+                if time.time() - os.path.getmtime(path) > STALE_TEMP_SECONDS:
+                    shutil.rmtree(path, ignore_errors=True)
+                    removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+def search(folders, wanted, exclude=(), progress=None, work_dir=None, tools=None, max_archive_mb=4096,
+           keep_hits=False):
     """Durchsucht folders nach Paketen mit IDs aus wanted.
 
-    work_dir: Temp-Ordner für entpackte RAR/7z-Inhalte. Treffer daraus bleiben dort liegen
-              (für --restore), bis der Aufrufer den Ordner löscht.
-    tools:    Entpacker aus archive_tools.find_tools() (None = automatisch suchen)
+    Speicherplatz: Jedes RAR/7z wird nur kurz entpackt und direkt danach wieder gelöscht –
+    auch wenn etwas gefunden wurde. Nur mit keep_hits=True (für --restore) bleiben die
+    gefundenen Pakete selbst im work_dir liegen, bis der Aufrufer es löscht.
+    Vor jedem Entpacken wird geprüft, ob genug Platz frei ist.
 
     Gibt (treffer, nicht_lesbar) zurück:
       treffer:      [{"pfad", "archiv_eintrag" (oder None), "ids": set, "groesse", "temp_datei"?}]
       nicht_lesbar: [{"pfad", "grund"}] – Archive, die nicht durchsucht werden konnten
     """
-    hits, unreadable = [], []
     if not wanted:
-        return hits, unreadable
-    if tools is None:
-        tools = archive_tools.find_tools()
+        return [], []
     own_work = work_dir is None
     if own_work:
-        work_dir = tempfile.mkdtemp(prefix="simvault_fund_")
+        work_dir = tempfile.mkdtemp(prefix=TEMP_PREFIX)
+    run = _Search(wanted, archive_tools.find_tools() if tools is None else tools, work_dir,
+                  keep_hits, max_archive_mb, progress)
     excluded = {os.path.normcase(os.path.abspath(x)) for x in exclude if x}
-    checked = 0
-    for folder in folders:
-        if progress:
-            progress(f"durchsuche {folder}")
-        for root, dirs, files in os.walk(folder):
-            dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS
-                       and os.path.normcase(os.path.abspath(os.path.join(root, d))) not in excluded]
-            for name in files:
-                path = os.path.join(root, name)
-                low = name.lower()
-                try:
-                    if low.endswith(".package"):
-                        checked += 1
-                        ids = _ids_in_entries(dbpf.read_index(path), wanted)
-                        if ids:
-                            hits.append({"pfad": path, "archiv_eintrag": None, "ids": ids,
-                                         "groesse": os.path.getsize(path)})
-                    elif low.endswith(".zip"):
-                        hits.extend(_search_zip(path, path, "", wanted, tools, work_dir, unreadable, 0, progress))
-                    elif low.endswith(archive_tools.EXTERNAL_ARCHIVES):
-                        if not tools:
-                            unreadable.append({"pfad": path, "grund": "kein Entpacker gefunden – 7-Zip installieren"})
-                        elif os.path.getsize(path) > max_archive_mb * 1024 * 1024:
-                            unreadable.append({"pfad": path, "grund": f"größer als {max_archive_mb} MB – übersprungen"})
-                        else:
-                            hits.extend(_search_external(path, path, "", wanted, tools, work_dir, unreadable, 0,
-                                                         progress))
-                except (dbpf.DBPFError, OSError, zipfile.BadZipFile, RuntimeError) as e:
-                    log.debug("%s übersprungen: %s", path, e)
-                    if low.endswith(".zip"):
-                        unreadable.append({"pfad": path, "grund": f"ZIP defekt oder geschützt ({e})"})
-                if progress and checked and checked % 500 == 0:
-                    progress(f"{checked} Pakete durchsucht")
-    if own_work and not hits:
-        shutil.rmtree(work_dir, ignore_errors=True)
-    return hits, unreadable
+    try:
+        for folder in folders:
+            if progress:
+                progress(f"durchsuche {folder}")
+            for root, dirs, files in os.walk(folder):
+                dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS
+                           and os.path.normcase(os.path.abspath(os.path.join(root, d))) not in excluded]
+                for name in files:
+                    run.file(os.path.join(root, name))
+    finally:
+        if own_work and not keep_hits:
+            shutil.rmtree(work_dir, ignore_errors=True)
+    return run.hits, run.unreadable
 
 
 def _chain(prefix, name):
     return f"{prefix} → {name}" if prefix else name
 
 
-def _search_zip(zip_path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress=None):
-    """Durchsucht ein ZIP. outer/prefix: Fundort für die Anzeige (äußeres Archiv und Weg hinein)."""
-    hits = []
-    with zipfile.ZipFile(zip_path) as z:
-        for info in z.infolist():
-            name = info.filename
-            low = name.lower()
-            if info.file_size == 0 or info.is_dir():
-                continue
+class _Search:
+    def __init__(self, wanted, tools, work_dir, keep_hits, max_archive_mb, progress):
+        self.wanted = wanted
+        self.tools = tools
+        self.work_dir = work_dir
+        self.keep_hits = keep_hits
+        self.max_bytes = max_archive_mb * 1024 * 1024
+        self.progress = progress
+        self.hits = []
+        self.unreadable = []
+        self.checked = 0
+
+    def _fail(self, where, reason):
+        self.unreadable.append({"pfad": where, "grund": reason})
+
+    def _space_ok(self, needed):
+        try:
+            return shutil.disk_usage(self.work_dir).free > needed + FREE_SPACE_RESERVE
+        except OSError:
+            return True
+
+    def _kept_path(self, name):
+        return os.path.join(tempfile.mkdtemp(dir=self.work_dir, prefix="f_"), os.path.basename(name))
+
+    def _count(self):
+        self.checked += 1
+        if self.progress and self.checked % 500 == 0:
+            self.progress(f"{self.checked} Pakete durchsucht")
+
+    # -- Dateien auf der Platte -------------------------------------------------
+    def file(self, path):
+        low = path.lower()
+        try:
             if low.endswith(".package"):
-                data = z.read(info)
-                try:
-                    ids = _ids_in_entries(dbpf.read_index_bytes(data), wanted)
-                except dbpf.DBPFError:
-                    continue
+                self._count()
+                ids = _ids_in_entries(dbpf.read_index(path), self.wanted)
                 if ids:
-                    hit = {"pfad": outer, "archiv_eintrag": _chain(prefix, name), "ids": ids,
-                           "groesse": info.file_size}
-                    if prefix:  # liegt in einem verschachtelten Archiv: für --restore zwischenspeichern
-                        hit["temp_datei"] = _keep(data, name, work_dir)
-                    hits.append(hit)
-            elif low.endswith((".zip",) + archive_tools.EXTERNAL_ARCHIVES) and depth < MAX_NESTING:
-                inner = os.path.join(tempfile.mkdtemp(dir=work_dir, prefix="z_"), os.path.basename(name))
-                with z.open(info) as src, open(inner, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
-                hits.extend(_search_nested(inner, outer, _chain(prefix, name), wanted, tools, work_dir,
-                                           unreadable, depth + 1, progress))
-    return hits
+                    self.hits.append({"pfad": path, "archiv_eintrag": None, "ids": ids,
+                                      "groesse": os.path.getsize(path)})
+            elif low.endswith(".zip"):
+                self.zip(path, path, "", 0)
+            elif low.endswith(archive_tools.EXTERNAL_ARCHIVES):
+                self.external(path, path, "", 0)
+        except (dbpf.DBPFError, OSError, zipfile.BadZipFile, RuntimeError, EOFError) as e:
+            log.debug("%s übersprungen: %s", path, e)
+            if low.endswith(".zip"):
+                self._fail(path, f"ZIP defekt oder geschützt ({e})")
 
-
-def _keep(data, name, work_dir):
-    path = os.path.join(tempfile.mkdtemp(dir=work_dir, prefix="f_"), os.path.basename(name))
-    with open(path, "wb") as f:
-        f.write(data)
-    return path
-
-
-def _search_nested(path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress):
-    try:
-        if path.lower().endswith(".zip"):
-            return _search_zip(path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress)
-        if not tools:
-            unreadable.append({"pfad": f"{outer} → {prefix}", "grund": "kein Entpacker gefunden – 7-Zip installieren"})
-            return []
-        return _search_external(path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress)
-    except (zipfile.BadZipFile, OSError, RuntimeError) as e:
-        unreadable.append({"pfad": f"{outer} → {prefix}", "grund": str(e)})
-        return []
-
-
-def _search_external(archive, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress=None):
-    """Entpackt ein RAR/7z kurz in den Temp-Ordner und durchsucht den Inhalt."""
-    if progress:
-        progress(f"entpacke {os.path.basename(archive)}")
-    dest = tempfile.mkdtemp(dir=work_dir, prefix="x_")
-    try:
-        archive_tools.extract_relevant(archive, dest, tools)
-    except RuntimeError as e:
-        unreadable.append({"pfad": _chain(outer, prefix) if prefix else outer, "grund": str(e)})
-        shutil.rmtree(dest, ignore_errors=True)
-        return []
-    hits, keep = [], False
-    for root, _dirs, files in os.walk(dest):
-        for name in files:
-            path = os.path.join(root, name)
-            rel = os.path.relpath(path, dest)
-            low = name.lower()
-            try:
+    # -- ZIP: direkt lesen, ohne zu entpacken -----------------------------------
+    def zip(self, zip_path, outer, prefix, depth):
+        with zipfile.ZipFile(zip_path) as z:
+            for info in z.infolist():
+                name, low = info.filename, info.filename.lower()
+                if info.file_size == 0 or info.is_dir():
+                    continue
                 if low.endswith(".package"):
-                    ids = _ids_in_entries(dbpf.read_index(path), wanted)
+                    self._count()
+                    try:
+                        with z.open(info) as member:   # gestreamt – das Paket landet nicht im Arbeitsspeicher
+                            ids = _ids_in_entries(dbpf.read_index_fileobj(member), self.wanted)
+                    except (dbpf.DBPFError, RuntimeError, OSError, EOFError, zipfile.BadZipFile):
+                        continue
                     if ids:
-                        hits.append({"pfad": outer, "archiv_eintrag": _chain(prefix, rel), "ids": ids,
-                                     "groesse": os.path.getsize(path), "temp_datei": path})
-                        keep = True
+                        hit = {"pfad": outer, "archiv_eintrag": _chain(prefix, name), "ids": ids,
+                               "groesse": info.file_size}
+                        if prefix and self.keep_hits:  # verschachtelt: für --restore aufheben
+                            target = self._kept_path(name)
+                            with z.open(info) as src, open(target, "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                            hit["temp_datei"] = target
+                        self.hits.append(hit)
                 elif low.endswith((".zip",) + archive_tools.EXTERNAL_ARCHIVES) and depth < MAX_NESTING:
-                    hits.extend(_search_nested(path, outer, _chain(prefix, rel), wanted, tools, work_dir,
-                                               unreadable, depth + 1, progress))
-            except (dbpf.DBPFError, OSError):
-                continue
-    if not keep:
-        shutil.rmtree(dest, ignore_errors=True)  # nichts gefunden: sofort aufräumen
-    return hits
+                    where = _chain(outer, _chain(prefix, name))
+                    if not self._space_ok(info.file_size):
+                        self._fail(where, "zu wenig freier Speicherplatz zum Prüfen")
+                        continue
+                    scratch = tempfile.mkdtemp(dir=self.work_dir, prefix="z_")
+                    try:
+                        inner = os.path.join(scratch, os.path.basename(name))
+                        with z.open(info) as src, open(inner, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        self.nested(inner, outer, _chain(prefix, name), depth + 1)
+                    finally:
+                        shutil.rmtree(scratch, ignore_errors=True)   # Kopie sofort wieder weg
+
+    def nested(self, path, outer, prefix, depth):
+        try:
+            if path.lower().endswith(".zip"):
+                self.zip(path, outer, prefix, depth)
+            else:
+                self.external(path, outer, prefix, depth)
+        except (zipfile.BadZipFile, OSError, RuntimeError, EOFError) as e:
+            self._fail(_chain(outer, prefix), str(e))
+
+    # -- RAR/7z: kurz entpacken, prüfen, sofort löschen -------------------------
+    def external(self, archive, outer, prefix, depth):
+        where = _chain(outer, prefix) if prefix else outer
+        if not self.tools:
+            self._fail(where, "kein Entpacker gefunden – 7-Zip installieren")
+            return
+        size = os.path.getsize(archive)
+        if size > self.max_bytes:
+            self._fail(where, f"größer als {self.max_bytes // (1024 * 1024)} MB – übersprungen")
+            return
+        if not self._space_ok(2 * size):
+            self._fail(where, "zu wenig freier Speicherplatz zum Entpacken")
+            return
+        if self.progress:
+            self.progress(f"entpacke {os.path.basename(archive)}")
+        dest = tempfile.mkdtemp(dir=self.work_dir, prefix="x_")
+        try:
+            try:
+                archive_tools.extract_relevant(archive, dest, self.tools)
+            except RuntimeError as e:
+                self._fail(where, str(e))
+                return
+            for root, _dirs, files in os.walk(dest):
+                for name in files:
+                    path = os.path.join(root, name)
+                    rel = os.path.relpath(path, dest)
+                    low = name.lower()
+                    try:
+                        if low.endswith(".package"):
+                            self._count()
+                            ids = _ids_in_entries(dbpf.read_index(path), self.wanted)
+                            if ids:
+                                hit = {"pfad": outer, "archiv_eintrag": _chain(prefix, rel), "ids": ids,
+                                       "groesse": os.path.getsize(path)}
+                                if self.keep_hits:   # nur das gefundene Paket aufheben, nicht das ganze Archiv
+                                    target = self._kept_path(name)
+                                    shutil.move(path, target)
+                                    hit["temp_datei"] = target
+                                self.hits.append(hit)
+                            else:
+                                os.remove(path)      # geprüft, nichts drin: Platz sofort freigeben
+                        elif low.endswith((".zip",) + archive_tools.EXTERNAL_ARCHIVES) and depth < MAX_NESTING:
+                            self.nested(path, outer, _chain(prefix, rel), depth + 1)
+                            os.remove(path)
+                    except (dbpf.DBPFError, OSError):
+                        continue
+        finally:
+            shutil.rmtree(dest, ignore_errors=True)   # entpackter Inhalt immer sofort weg
 
 
 def summarize(hits, parts):

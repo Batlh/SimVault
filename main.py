@@ -195,9 +195,15 @@ def cmd_find(cfg, args):
               "Tipp: winget install 7zip.7zip, dann py -3 main.py setup")
     wanted = {int(p["id"], 16) for p in parts}
     import tempfile
-    with tempfile.TemporaryDirectory(prefix="simvault_fund_") as work_dir:
+    temp_base = cfg.get("temp_folder") or None
+    if temp_base:
+        os.makedirs(temp_base, exist_ok=True)
+    cc_finder.cleanup_stale_temp(temp_base)   # Reste abgebrochener Läufe entfernen
+    # Entpacktes wird pro Archiv sofort wieder gelöscht; nur bei --restore bleiben die Funde
+    # selbst bis zum Zurückholen liegen. Der Ordner verschwindet am Ende in jedem Fall.
+    with tempfile.TemporaryDirectory(prefix=cc_finder.TEMP_PREFIX, dir=temp_base) as work_dir:
         hits, unreadable = cc_finder.search(folders, wanted, exclude=[cfg["mods_folder"]], progress=_progress,
-                                            work_dir=work_dir, tools=tools,
+                                            work_dir=work_dir, tools=tools, keep_hits=args.restore,
                                             max_archive_mb=cfg.get("max_archive_mb", 4096))
         found, n_found = cc_finder.summarize(hits, parts)
         restored = None
