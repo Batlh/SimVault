@@ -136,21 +136,49 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 
 ## 🗺️ Roadmap (planned)
 
-- 🔎 **Missing CC Detection for library lots & rooms** (`.blueprint`/`.room` use a different encoding)
-- 🌐 **CC Search Engine** — real result lists (title, image, download link, description) instead of search links
-  - fixed sources as core modules (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims, NewSea)
-  - extensible plugin architecture for additional, user-defined sources ✅ (done – see `plugins/`;
-    full sources plug in via `search()`, the program side for result lists is next)
-  - headless browser support (Selenium/Playwright)
-  - automated download management
-- 🔐 **Secure Login Manager** — manual login in a visible window with 2FA support;
-  cookies stored **AES256-encrypted** and decrypted only in RAM at runtime (no plain-text cookies on disk)
-- 🛡️ **Captcha Handling** — manual captcha solving via the visible login window (optional automation later)
+- 🔎 **Missing CC Detection for library lots & rooms** — `.blueprint`/`.room` hold the lot as a protobuf that is
+  packed with an LZ-style compression of its own (not zlib, Snappy or RefPack); not decoded yet
+- 🌐 **CC Search Engine: result lists from the big sites** — the program side is done (result list with images,
+  download, built-in browser for JavaScript pages via `session.render()`); what is missing are the parsers for
+  TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims and NewSea themselves. They can be added
+  as full sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`). Until then those sites are opened in the
+  built-in browser, where downloads are caught and installed automatically.
+- 🛡️ **Captcha automation** — captchas are solved by hand in the built-in browser (done); automation optional later
 - 📱 **Mobile App** for remote analysis
-- 🌍 **Full Internationalization (i18n)**
-- 🗄️ **Optional MySQL/PostgreSQL database plugin** for advanced users
+- 🌍 **More languages** — German and English are in; reports and the command line are still German only
 
 ---
+
+## 🌐 Web search, logins & downloads
+
+- **Built-in browser** (page *Web search*, Chromium via Qt WebEngine): every source button and every CC link
+  from a library household opens there. Whatever you download in it lands in the download folder and is
+  **unpacked and installed right away** (can be switched off): packages go to `Mods/SimVault_heruntergeladen/<name>/`,
+  script mods to `Mods/SimVault_heruntergeladen/` (they only load one folder deep), library files (Sims, lots,
+  rooms) to `Tray/`. ZIP, RAR and 7z (also nested) are unpacked. Already installed CC (all CAS parts are in the
+  Mods folder, or the same file is already there) and broken files are skipped; nothing is ever overwritten.
+- **Result lists**: sources that deliver real results (full sources in `plugins/`) show title, preview image and
+  creator; *Download and install* fetches the file — if the site answers with a page instead (login, captcha,
+  waiting time), it is opened in the built-in browser. Full sources can use `session.render(url)` to get the
+  HTML of JavaScript-heavy pages from the built-in browser (headless browser support without Selenium).
+- **Secure login manager**: *Sources → Log in …* opens the site's login page in the built-in browser — 2FA codes
+  and captchas are entered there by you. *Save login* stores only the cookies afterwards, **AES-256-GCM encrypted**
+  (`%APPDATA%\SimVault\logins.bin`); the key is protected by the Windows user account (DPAPI), decrypted only in
+  RAM. The browser itself runs "off the record" and writes no cookies to disk. Passwords are never stored.
+- Command line: `python main.py install <file, archive or URL>` installs the same way.
+
+## 🗄️ Database
+
+Every analysis is also stored in a database: **SQLite** by default (`simvault_data.db`), or **MySQL/MariaDB** /
+**PostgreSQL** for advanced users — set `"type": "mysql"` or `"postgresql"` in the `database` section of
+`config.json` and install the driver (`pip install pymysql` or `pip install "psycopg[binary]"`). The password can
+come from the environment variable `SIMVAULT_DB_PASSWORD` instead of the file. `python main.py db` checks the
+connection and creates the tables (`scans`, `mod_files`, `issues`, `missing_cc`).
+
+## 🌍 Language
+
+The program window speaks **German and English** — *Settings → Language* (automatic = Windows language).
+Reports and the command line are German.
 
 ## 🛠️ Command line
 
@@ -174,6 +202,8 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
     python main.py conflicts --aufraeumen   # move redundant files out, remove outdated copies (safe cases only)
     python main.py repair               # check CC files and savegames for damage
     python main.py repair --gruendlich --ausfuehren   # thorough check, repair what can be repaired safely
+    python main.py install "Kijiko Set.zip"   # install downloaded CC (file, archive or URL), no duplicates
+    python main.py db                   # check the database connection (SQLite, MySQL/MariaDB, PostgreSQL)
     python main.py backup mods          # backup (mode from config.json)
     python main.py backup saves --mode delta
     python main.py backup list          # show all backups
@@ -197,8 +227,9 @@ Run the tests: `python -m unittest discover -s tests -v`
 ## 💻 Requirements
 
 - Python 3.8+ (on Windows use `py -3 main.py …` if `python` starts Python 2)
-- No database server required (uses local SQLite by default)
-- Internet connection only for opening the CC search links (and later the CC Search Engine)
+- No database server required (uses local SQLite by default; MySQL/PostgreSQL optional with their driver)
+- Program window from source: `pip install -r requirements-gui.txt` (PySide6 incl. Qt WebEngine, cryptography)
+- Internet connection only for the web search, the built-in browser and update checks
 
 ---
 

@@ -75,6 +75,17 @@ class SettingsPage(QWidget):
         self.app_name.setPlaceholderText("SimVault")
         self.logo = PathEdit(folder=False, placeholder="optional – eigenes Logo (PNG/JPG) für Fenster und Berichte")
         pf.addRow("Updates:", up_row)
+        import i18n
+        self.language = QComboBox()
+        self.language.addItem("Automatisch (Windows-Sprache)", "auto")
+        for code, label in i18n.LANGUAGES.items():
+            self.language.addItem(label, code)
+        lang_note = QLabel("Die Sprache wechselt nach einem Neustart von SimVault.")
+        lang_note.setObjectName("Muted")
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(self.language)
+        lang_row.addWidget(lang_note, 1)
+        pf.addRow("Sprache:", lang_row)
         pf.addRow("Programmname:", self.app_name)
         pf.addRow("Logo:", self.logo)
         lay.addWidget(program)
@@ -106,6 +117,7 @@ class SettingsPage(QWidget):
         self.drives.setChecked(bool(raw.get("search_drives", True)))
         self.max_mb.setValue(int(raw.get("max_archive_mb", 4096)))
         self.cfg_label.setText(self.state.config_path)
+        self.language.setCurrentIndex(max(self.language.findData(raw.get("ui_language", "auto")), 0))
         self.update_on_start.setChecked(bool((raw.get("updates") or {}).get("check_on_start", True)))
         branding = raw.get("branding") or {}
         name = branding.get("app_name", "")
@@ -171,6 +183,7 @@ class SettingsPage(QWidget):
         raw["report_folder"] = self.reports.text() or "./reports"
         raw["temp_folder"] = self.temp.text()
         raw["updates"] = {"check_on_start": self.update_on_start.isChecked()}
+        raw["ui_language"] = self.language.currentData()
         raw["branding"] = dict(raw.get("branding") or {}, app_name=self.app_name.text().strip() or "SimVault",
                                logo_path=self.logo.text())
         raw["search_drives"] = self.drives.isChecked()

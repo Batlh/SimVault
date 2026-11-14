@@ -18,6 +18,11 @@ zusammen mit der Liste aller Commits seit dem letzten Release.
 - Auto-Updater: sucht beim Start auf GitHub nach einer neuen Version, zeigt den Changelog, lädt herunter und tauscht das Programm nach dem Beenden aus. Befehl `update`.
 - Vorschaubilder der Bibliothek: Haushalte mit fehlender CC zeigen ihr Bild – im Programm und im HTML-Bericht.
 - Eigenes Branding: Programmname und Logo für Fenster und Berichte.
+- Websuche mit eingebautem Browser: Quellen und CC-Links aus Bibliotheks-Haushalten öffnen sich im Programm; Downloads werden abgefangen, entpackt (ZIP/RAR/7z, auch verschachtelt) und gleich installiert – Pakete nach `Mods\SimVault_heruntergeladen`, Script-Mods eine Ebene tief, Sims/Häuser in die Bibliothek. Schon Installiertes und Kaputtes wird übersprungen, nichts überschrieben. Befehl `install` (Datei, Archiv oder URL).
+- Trefferlisten mit Vorschaubild für Quellen, die echte Ergebnisse liefern (Voll-Quellen); Quellen können Seiten über den eingebauten Browser mit JavaScript laden lassen (`session.render`).
+- Login-Manager: Anmelden im sichtbaren Browser-Fenster (inklusive Zwei-Faktor und Captchas von Hand); gespeichert werden nur die Cookies, verschlüsselt mit AES-256-GCM, Schlüssel durch das Windows-Benutzerkonto (DPAPI) geschützt. Der Browser selbst schreibt keine Cookies auf die Platte.
+- Datenbank-Erweiterung: neben SQLite auch MySQL/MariaDB und PostgreSQL (Treiber selbst installieren), Befehl `db` prüft die Verbindung.
+- Oberfläche auf Deutsch und Englisch (Einstellungen → Sprache, „automatisch“ = Windows-Sprache).
 
 ### Bugfixes
 - Kommandozeile stürzte unter Windows ab, wenn die Ausgabe umgeleitet wurde (Zeichen „→“).

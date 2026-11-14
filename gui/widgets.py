@@ -134,6 +134,9 @@ class DictTableModel(QAbstractTableModel):
         if role in (Qt.DisplayRole, Qt.ToolTipRole):
             if isinstance(value, (list, tuple)):
                 return ", ".join(str(v) for v in value)
+            if isinstance(value, str):
+                import i18n
+                return i18n.tr(value)            # z. B. Status „genutzt“ -> „used“
             return "" if value is None else str(value)
         if role == Qt.UserRole:          # zum Sortieren: Zahlen als Zahlen
             return value if isinstance(value, (int, float)) else str(value).lower()
@@ -146,7 +149,8 @@ class DictTableModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return self.columns[section][0]
+            import i18n
+            return i18n.tr(self.columns[section][0])
         return None
 
 

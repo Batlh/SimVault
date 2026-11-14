@@ -142,7 +142,7 @@ def write_report(cfg, analysis=None, mod_scan=None, found=None):
     from report_generator import generate_report
     analysis = analysis or {}
     return generate_report(mod_scan or analysis.get("mod_scan"), analysis.get("usage"), analysis.get("saves"),
-                           output_dir=cfg["report_folder"], db_path=cfg["database"].get("sqlite_path"),
+                           output_dir=cfg["report_folder"], db=cfg["database"],
                            formats=cfg["report_formats"], app_name=cfg["branding"].get("app_name", "SimVault"),
                            missing=analysis.get("missing"), missing_info=analysis.get("missing_info"), found=found,
                            conflicts=analysis.get("conflicts"), logo_path=cfg["branding"].get("logo_path"))
@@ -266,3 +266,88 @@ def latest_report(cfg, with_found=False):
         if not with_found or (data.get("fundstellen") or {}).get("dateien"):
             return path, data
     return None, None
+
+
+# ---------------------------------------------------------------------------
+# Anmeldungen, Websuche, Downloads
+# ---------------------------------------------------------------------------
+
+def secure_store(cfg=None):
+    """Verschlüsselter Speicher für Anmeldungen (im Benutzerordner von SimVault)."""
+    import secure_store as ss
+    return ss.SecureStore(user_data_dir())
+
+
+def download_folder(cfg):
+    folder = cfg.get("download_folder") or os.path.join(user_data_dir(), "Downloads")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def web_session(cfg, renderer=None):
+    from web_session import WebSession
+    try:
+        store = secure_store(cfg)
+    except Exception:
+        store = None
+    return WebSession(store, renderer)
+
+
+def web_search(cfg, query, session=None, progress=None, should_stop=None, with_images=True):
+    """Fragt alle eingeschalteten Voll-Quellen ab. Gibt (Treffer, Links, Fehler) zurück:
+    Treffer: Liste von SearchResult (extra["bild"] = Bilddaten), Links: {Name: URL} der Link-Quellen,
+    Fehler: [(Quelle, Meldung)]."""
+    import sources
+    session = session or web_session(cfg)
+    results, links, errors = [], {}, []
+    for src in sources.enabled_sources(cfg):
+        if should_stop and should_stop():
+            break
+        url = src.search_url(query)
+        if url:
+            links[src.name] = url
+        if not src.can_search:
+            continue
+        if progress:
+            progress(f"suche bei {src.name} …")
+        try:
+            found = src.search(query, session=session) or []
+        except Exception as e:          # eine Quelle darf die anderen nicht aufhalten
+            errors.append((src.name, str(e)[:200]))
+            continue
+        for r in found:
+            r.source_id = r.source_id or src.id
+            r.extra.setdefault("quelle", src.name)
+        results += found
+    if with_images:
+        for i, r in enumerate(results):
+            if should_stop and should_stop():
+                break
+            if r.image_url and "bild" not in r.extra:
+                if progress:
+                    progress(f"Vorschaubilder {i + 1}/{len(results)}")
+                try:
+                    r.extra["bild"] = session.get_bytes(r.image_url, limit=2 << 20)
+                except Exception:
+                    r.extra["bild"] = b""
+    return results, links, errors
+
+
+def download(cfg, url, source="", progress=None, should_stop=None, session=None):
+    """Lädt url in den Download-Ordner und trägt es in die Download-Liste ein. Gibt (Eintrag, Liste) zurück."""
+    import downloads
+    folder = download_folder(cfg)
+    session = session or web_session(cfg)
+    path = session.download(url, folder, progress=progress, should_stop=should_stop)
+    items = downloads.DownloadList(folder)
+    return items.add(path, url, source), items
+
+
+def install_download(cfg, path, progress=None):
+    """Installiert einen Download (Pakete, Scripts, Bibliothek, Archive). Gibt das Ergebnis-Dict zurück."""
+    import downloads
+    import archive_tools
+    if progress:
+        progress(f"installiere {os.path.basename(path)} …")
+    return downloads.install(path, cfg["mods_folder"], cfg.get("tray_folder"),
+                             archive_tools.tools_from_config(cfg), work_dir=cfg.get("temp_folder") or None)

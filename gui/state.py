@@ -11,6 +11,9 @@ class AppState(QObject):
     analysis_changed = Signal()
     found_changed = Signal()
     message = Signal(str)           # kurze Meldung für die Statusleiste
+    web_search = Signal(str)        # im Netz suchen (Seite „Websuche“)
+    open_in_browser = Signal(str)   # Adresse im eingebauten Browser öffnen
+    login_requested = Signal(object)  # Quelle, bei der man sich anmelden will
 
     def __init__(self, config_path=None):
         super().__init__()

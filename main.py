@@ -124,7 +124,7 @@ def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_i
     files = generate_report(mod_scan, usage, saves, missing=missing, missing_info=missing_info, found=found,
                             conflicts=conflicts,
                             output_dir=cfg["report_folder"],
-                            db_path=cfg["database"].get("sqlite_path"),
+                            db=cfg["database"],
                             formats=cfg["report_formats"],
                             app_name=cfg["branding"].get("app_name", "SimVault"),
                             logo_path=cfg["branding"].get("logo_path"))
@@ -499,6 +499,45 @@ def cmd_update(cfg, args):
     return 0
 
 
+def cmd_db(cfg, args):
+    """Prüft die Verbindung zur eingestellten Datenbank (SQLite, MySQL/MariaDB, PostgreSQL)."""
+    import database
+    ok, message = database.test_connection(cfg["database"])
+    print(message)
+    return 0 if ok else 1
+
+
+def cmd_install(cfg, args):
+    """Installiert heruntergeladene CC (Datei oder Archiv, auch eine URL) – ohne Doppeltes, ohne Überschreiben."""
+    import core
+    import downloads
+    if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
+        return 1
+    for target in args.dateien:
+        if target.lower().startswith(("http://", "https://")):
+            try:
+                item, _items = core.download(cfg, target, progress=_progress)
+            except Exception as e:
+                print(f"{target}: nicht heruntergeladen – {e}")
+                continue
+            path = item["datei"]
+            print(f"Heruntergeladen: {path}")
+        else:
+            path = target
+            if not os.path.isfile(path):
+                print(f"Datei nicht gefunden: {path}")
+                continue
+        result = core.install_download(cfg, path)
+        print(f"\n{os.path.basename(path)}: {downloads.summary(result)}")
+        for kind, dest in result["installiert"]:
+            print(f"  + {kind}: {dest}")
+        for name, reason in result["uebersprungen"]:
+            print(f"  = {name} – {reason}")
+        for name, reason in result["fehler"]:
+            print(f"  ! {name} – {reason}")
+    return 0
+
+
 def _ask(prompt, default=""):
     shown = f" [{default}]" if default else ""
     try:
@@ -640,6 +679,13 @@ def build_parser():
     u = sub.add_parser("update", help="nach einer neueren SimVault-Version suchen")
     u.add_argument("--laden", action="store_true", help="das neue Release (ZIP) herunterladen")
     u.set_defaults(func=cmd_update)
+
+    dbp = sub.add_parser("db", help="Verbindung zur Datenbank prüfen (SQLite, MySQL/MariaDB, PostgreSQL)")
+    dbp.set_defaults(func=cmd_db)
+
+    ins = sub.add_parser("install", help="heruntergeladene CC installieren (Datei, Archiv oder URL)")
+    ins.add_argument("dateien", nargs="+", help=".package, .ts4script, Bibliotheks-Datei, ZIP/RAR/7z oder URL")
+    ins.set_defaults(func=cmd_install)
 
     st = sub.add_parser("setup", help="einrichten: Ordner, Entpacker für RAR/7z, Laufwerke")
     st.set_defaults(func=cmd_setup)

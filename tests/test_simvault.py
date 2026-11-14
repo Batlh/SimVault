@@ -1382,3 +1382,453 @@ class GuiSmokeTests(unittest.TestCase):
             window.close()
         finally:
             shutil.rmtree(tmp)
+
+
+# --- Anmeldungen, Websuche, Downloads (mit lokalem Webserver, ohne Internet) ----------
+
+import threading
+import http.server
+
+
+class _Handler(http.server.BaseHTTPRequestHandler):
+    """Kleiner Test-Server: liefert Dateien aus FILES, prüft Cookies, simuliert eine Login-Seite."""
+    FILES = {}
+    seen_cookies = []
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        _Handler.seen_cookies.append(self.headers.get("Cookie", ""))
+        path = self.path.split("?")[0]
+        if path == "/login-noetig":
+            body, ctype = b"<!DOCTYPE html><html>Bitte anmelden</html>", "text/html; charset=utf-8"
+            disposition = None
+        elif path in self.FILES:
+            body, ctype, disposition = self.FILES[path]
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        if disposition:
+            self.send_header("Content-Disposition", disposition)
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def start_server(files):
+    _Handler.FILES = files
+    _Handler.seen_cookies = []
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+class SecureStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_encrypted_roundtrip_and_tamper(self):
+        import secure_store
+        store = secure_store.SecureStore(self.tmp)
+        cookie = {"name": "session_id", "value": "GEHEIM-12345", "domain": ".patreon.com", "path": "/",
+                  "secure": True, "expires": 0}
+        store.save("patreon", [cookie])
+        with open(store.data_path, "rb") as f:
+            raw = f.read()
+        self.assertNotIn(b"GEHEIM", raw)                        # nie im Klartext auf der Platte
+        self.assertNotIn(b"patreon", raw)
+        again = secure_store.SecureStore(self.tmp)               # neu geladen, gleicher Schlüssel
+        self.assertEqual(again.cookies("patreon"), [cookie])
+        self.assertEqual(again.logins()["patreon"]["domains"], ["patreon.com"])
+        with open(store.data_path, "r+b") as f:                  # Manipulation fällt auf
+            f.seek(-5, 2)
+            f.write(b"XXXXX")
+        with self.assertRaises(secure_store.StoreError):
+            secure_store.SecureStore(self.tmp).cookies("patreon")
+        os.remove(store.key_path)                                # anderer Schlüssel: nicht lesbar
+        store2 = secure_store.SecureStore(self.tmp)
+        with self.assertRaises(secure_store.StoreError):
+            store2.cookies("patreon")
+
+    def test_key_is_protected_by_callback(self):
+        import secure_store
+        store = secure_store.SecureStore(self.tmp, protect=(lambda k: b"P" + bytes(b ^ 0x55 for b in k),
+                                                            lambda k: bytes(b ^ 0x55 for b in k[1:])))
+        store.save("x", [{"name": "a", "value": "b", "domain": "x.com"}])
+        with open(store.key_path, "rb") as f:
+            self.assertTrue(f.read().startswith(b"P"))
+        self.assertEqual(len(store.cookies("x")), 1)
+
+    @unittest.skipUnless(os.name == "nt", "nur Windows (DPAPI)")
+    def test_windows_dpapi(self):
+        import secure_store
+        blob = secure_store._dpapi(b"k" * 32, True)
+        self.assertNotEqual(blob, b"k" * 32)
+        self.assertEqual(secure_store._dpapi(blob, False), b"k" * 32)
+
+    def test_cookie_header_rules(self):
+        from secure_store import cookie_header
+        cookies = [{"name": "a", "value": "1", "domain": ".patreon.com", "path": "/"},
+                   {"name": "b", "value": "2", "domain": "www.patreon.com", "path": "/posts", "secure": True},
+                   {"name": "c", "value": "3", "domain": "evilpatreon.com", "path": "/"}]
+        self.assertEqual(cookie_header(cookies, "https://www.patreon.com/posts/123"), "a=1; b=2")
+        self.assertEqual(cookie_header(cookies, "http://www.patreon.com/posts/123"), "a=1")
+        self.assertEqual(cookie_header(cookies, "https://patreon.com/home"), "a=1")
+
+
+class DownloadInstallTests(unittest.TestCase):
+    def setUp(self):
+        import zipfile
+        self.tmp = tempfile.mkdtemp()
+        self.mods = os.path.join(self.tmp, "Mods")
+        self.tray = os.path.join(self.tmp, "Tray")
+        os.makedirs(self.mods)
+        os.makedirs(self.tray)
+        self.have = os.path.join(self.mods, "Vorhanden.package")
+        dbpf.write_package(self.have, [(dbpf.TYPE_CASP, 0, 0xA000000000000001, b"alt")])
+        src = os.path.join(self.tmp, "src")
+        os.makedirs(src)
+
+        def pkg(name, instance):
+            path = os.path.join(src, name)
+            dbpf.write_package(path, [(dbpf.TYPE_CASP, 0, instance, b"casp" + name.encode())])
+            return path
+
+        new_pkg = pkg("Neues_Kleid.package", 0xB000000000000002)
+        old_pkg = pkg("Schon_da.package", 0xA000000000000001)
+        script = os.path.join(src, "Mod.ts4script")
+        with zipfile.ZipFile(script, "w") as z:
+            z.writestr("mod/__init__.pyc", b"x")
+        inner = os.path.join(src, "innen.zip")
+        with zipfile.ZipFile(inner, "w") as z:
+            z.write(pkg("Haare.package", 0xB000000000000003), "Haare.package")
+        self.archive = os.path.join(self.tmp, "Set.zip")
+        with zipfile.ZipFile(self.archive, "w") as z:
+            z.write(new_pkg, "Set/Neues_Kleid.package")
+            z.write(old_pkg, "Set/Schon_da.package")
+            z.write(script, "Set/Mod.ts4script")
+            z.write(inner, "Set/Extras/innen.zip")
+            z.writestr("Set/0x00000002!0x0000000000abcdef.trayitem", b"\x00" * 20)
+            z.writestr("Set/0x00000000!0x0000000000abcdef.householdbinary", b"\x00" * 20)
+            z.writestr("Set/LIESMICH.txt", "Viel Spaß")
+            z.writestr("Set/kaputt.package", b"kein Paket")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def test_install_archive_places_everything_and_skips_known(self):
+        import downloads
+        result = downloads.install(self.archive, self.mods, self.tray)
+        placed = {(k, os.path.relpath(p, self.tmp)) for k, p in result["installiert"]}
+        base = os.path.join("Mods", downloads.INSTALL_SUBFOLDER)
+        self.assertEqual(placed, {
+            ("Paket", os.path.join(base, "Set", "Neues_Kleid.package")),
+            ("Paket", os.path.join(base, "Set", "Haare.package")),
+            ("Script", os.path.join(base, "Mod.ts4script")),
+            ("Bibliothek", os.path.join("Tray", "0x00000002!0x0000000000abcdef.trayitem")),
+            ("Bibliothek", os.path.join("Tray", "0x00000000!0x0000000000abcdef.householdbinary"))})
+        self.assertEqual([n for n, _r in result["uebersprungen"]], [os.path.join("Set", "Schon_da.package")])
+        self.assertEqual([n for n, _r in result["fehler"]], [os.path.join("Set", "kaputt.package")])
+        # zweimal installieren legt nichts doppelt an
+        again = downloads.install(self.archive, self.mods, self.tray)
+        self.assertEqual(again["installiert"], [])
+        self.assertEqual(len(again["uebersprungen"]), 6)
+
+    def test_web_page_instead_of_file(self):
+        import downloads
+        page = os.path.join(self.tmp, "datei.package")
+        with open(page, "w") as f:
+            f.write("<!DOCTYPE html><html>Login</html>")
+        result = downloads.install(page, self.mods, self.tray)
+        self.assertIn("beschädigt", result["fehler"][0][1])
+        html = os.path.join(self.tmp, "seite.htm")
+        with open(html, "w") as f:
+            f.write("<html>Login</html>")
+        self.assertIn("Webseite", downloads.install(html, self.mods, self.tray)["fehler"][0][1])
+
+    def test_download_with_cookies_and_login_page(self):
+        import secure_store
+        import web_session
+        with open(self.archive, "rb") as f:
+            data = f.read()
+        server, base = start_server({"/dl/12345": (data, "application/zip",
+                                                    'attachment; filename="Kijiko Set.zip"')})
+        try:
+            store = secure_store.SecureStore(os.path.join(self.tmp, "store"))
+            store.save("test", [{"name": "sid", "value": "abc", "domain": "127.0.0.1", "path": "/"}])
+            session = web_session.WebSession(store)
+            folder = os.path.join(self.tmp, "Downloads")
+            path = session.download(base + "/dl/12345", folder)
+            self.assertEqual(os.path.basename(path), "Kijiko Set.zip")
+            self.assertIn("sid=abc", _Handler.seen_cookies[-1])
+            second = session.download(base + "/dl/12345", folder)          # nichts überschreiben
+            self.assertEqual(os.path.basename(second), "Kijiko Set (2).zip")
+            with self.assertRaises(web_session.NeedsBrowser):
+                session.download(base + "/login-noetig", folder)
+            self.assertEqual(sorted(os.listdir(folder)), ["Kijiko Set (2).zip", "Kijiko Set.zip"])   # keine Reste
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_cli_install_from_url(self):
+        with open(self.archive, "rb") as f:
+            data = f.read()
+        server, base = start_server({"/Set.zip": (data, "application/zip", None)})
+        sims = os.path.join(self.tmp, "Sims")
+        os.makedirs(sims)
+        shutil.move(self.mods, os.path.join(sims, "Mods"))
+        shutil.move(self.tray, os.path.join(sims, "Tray"))
+        cfg_path = os.path.join(self.tmp, "config.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump({"sims_folder": sims, "download_folder": os.path.join(self.tmp, "dl")}, f)
+        try:
+            self.assertEqual(main.main(["--config", cfg_path, "install", base + "/Set.zip"]), 0)
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertTrue(os.path.isfile(os.path.join(sims, "Mods", "SimVault_heruntergeladen", "Set",
+                                                    "Neues_Kleid.package")))
+
+
+class WebSearchTests(unittest.TestCase):
+    def test_full_source_results_with_images(self):
+        import core
+        import sources.loader as loader
+        page = (b'<div class="r"><a href="/item/1">Kijiko Wimpern</a><img src="/img/1.jpg"><i>Kijiko</i></div>'
+                b'<div class="r"><a href="/item/2">Kijiko Haare</a><img src="/img/2.jpg"><i>Kijiko</i></div>')
+        server, base = start_server({"/suche": (page, "text/html", None),
+                                     "/img/1.jpg": (b"\xff\xd8bild1", "image/jpeg", None),
+                                     "/img/2.jpg": (b"\xff\xd8bild2", "image/jpeg", None)})
+        tmp = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(tmp, "testquelle.py"), "w", encoding="utf-8") as f:
+                f.write(textwrap.dedent(f'''
+                    import re
+                    from sources.base import Source, SearchResult
+                    class Test(Source):
+                        id = "test"
+                        name = "Testseite"
+                        def search_url(self, q):
+                            return "{base}/suche?q=" + q
+                        def search(self, query, session=None):
+                            html = session.render(self.search_url(query))
+                            return [SearchResult(title=t, url="{base}" + u, image_url="{base}" + i, creator=c)
+                                    for u, t, i, c in re.findall(
+                                        r'<a href="([^"]+)">([^<]+)</a><img src="([^"]+)"><i>([^<]+)</i>', html)]
+                    class Kaputt(Source):
+                        id = "kaputt"
+                        name = "Kaputte Seite"
+                        def search(self, query, session=None):
+                            raise OSError("Seite antwortet nicht")
+                '''))
+            cfg = {"plugin_folders": [tmp], "sources_enabled": {}}
+            results, links, errors = core.web_search(cfg, "Kijiko", session=core.web_session(cfg))
+            self.assertEqual([(r.title, r.creator, r.extra["bild"]) for r in results],
+                             [("Kijiko Wimpern", "Kijiko", b"\xff\xd8bild1"),
+                              ("Kijiko Haare", "Kijiko", b"\xff\xd8bild2")])
+            self.assertEqual(results[0].extra["quelle"], "Testseite")
+            self.assertEqual(errors, [("Kaputte Seite", "Seite antwortet nicht")])
+            self.assertIn("Testseite", links)
+            self.assertIn("The Sims Resource", links)                       # Link-Quellen weiter dabei
+        finally:
+            server.shutdown()
+            server.server_close()
+            shutil.rmtree(tmp)
+            loader_cache = getattr(loader, "_cache", None)
+            if isinstance(loader_cache, dict):
+                loader_cache.clear()
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6 nicht installiert")
+class BrowserTests(unittest.TestCase):
+    def test_render_runs_javascript_and_keeps_cookies_in_memory(self):
+        if sys.platform.startswith("linux"):
+            os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu")
+        try:
+            from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+        except ImportError:
+            self.skipTest("Qt WebEngine nicht installiert")
+        import secure_store
+        from PySide6.QtCore import QTimer
+        from gui.browser import BrowserCore
+        page = b"<html><body><div id=x>vorher</div><script>document.getElementById('x').textContent='nachher-JS';" \
+               b"document.cookie='probe=1; path=/'</script></body></html>"
+        server, base = start_server({"/seite": (page, "text/html", None)})
+        tmp = tempfile.mkdtemp()
+        app = QApplication.instance() or QApplication([])
+        try:
+            browser = BrowserCore(secure_store.SecureStore(tmp), tmp)
+            out = {}
+
+            def worker():
+                try:
+                    out["html"] = browser.render(base + "/seite", timeout=40)
+                except Exception as e:
+                    out["error"] = e
+
+            threading.Thread(target=worker, daemon=True).start()
+            timer = QTimer()
+            timer.timeout.connect(lambda: out and app.quit())
+            timer.start(100)
+            QTimer.singleShot(45000, app.quit)
+            app.exec()
+            timer.stop()
+            self.assertIn("nachher-JS", out.get("html") or "", out.get("error"))
+            self.assertEqual(browser.save_login("test", "127.0.0.1"), 1)
+            self.assertEqual(secure_store.SecureStore(tmp).cookies("test")[0]["value"], "1")
+            self.assertFalse([n for n in os.listdir(tmp) if n not in ("logins.bin", "logins.key")])  # nichts sonst
+        finally:
+            server.shutdown()
+            server.server_close()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class DatabaseTests(unittest.TestCase):
+    def _data(self):
+        from datetime import datetime
+        summary = {"mods_ordner": "C:/Mods", "spielstaende": ["Slot_1.save"]}
+        rows = [{"datei": "a.package", "kategorie": "CAS", "status": "genutzt", "spielstaende": ["Slot_1.save"],
+                 "tray_eintraege": 0, "groesse_bytes": 10, "ressourcen": 2}]
+        issues = [{"schwere": "Hinweis", "art": "Konflikt", "meldung": "x", "dateien": ["a", "b"]}]
+        missing = [{"id": "0xAB", "art": "Haare", "anzahl": 3, "verwendet_von": ["Bella"], "quellen": ["Slot_1"]}]
+        return datetime(2026, 11, 14, 12, 0), summary, issues, rows, missing
+
+    def test_sqlite(self):
+        import database
+        tmp = tempfile.mkdtemp()
+        try:
+            db = {"type": "sqlite", "sqlite_path": os.path.join(tmp, "sub", "s.db")}
+            self.assertEqual(database.write_scan(db, *self._data()), 1)
+            self.assertEqual(database.write_scan(db, *self._data()), 2)
+            conn = sqlite3.connect(db["sqlite_path"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM mod_files").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT used_by FROM missing_cc").fetchone()[0], '["Bella"]')
+            conn.close()
+            self.assertTrue(database.test_connection(db)[0])
+        finally:
+            shutil.rmtree(tmp)
+
+    def _fake_driver(self, module_name, rows_returned=(7,)):
+        import types
+        log = []
+
+        class Cursor:
+            lastrowid = 5
+
+            def execute(self, sql, params=None):
+                log.append(("execute", sql, params))
+
+            def executemany(self, sql, rows):
+                log.append(("executemany", sql, list(rows)))
+
+            def fetchone(self):
+                return rows_returned
+
+        class Conn:
+            def cursor(self):
+                return Cursor()
+
+            def commit(self):
+                log.append(("commit",))
+
+            def rollback(self):
+                log.append(("rollback",))
+
+            def close(self):
+                log.append(("close",))
+
+        mod = types.ModuleType(module_name)
+        mod.connect = lambda **kw: (log.append(("connect", kw)), Conn())[1]
+        return mod, log
+
+    def test_mysql_and_postgresql_sql(self):
+        import database
+        for kind, module, port, scan_id, marker in (("mysql", "pymysql", 3306, 5, "AUTO_INCREMENT"),
+                                                     ("postgresql", "psycopg", 5432, 7, "SERIAL")):
+            fake, log = self._fake_driver(module)
+            old = sys.modules.get(module)
+            sys.modules[module] = fake
+            os.environ["SIMVAULT_DB_PASSWORD"] = "geheim"
+            try:
+                db = {"type": kind, kind: {"user": "sim", "database": "sv"}}
+                self.assertEqual(database.write_scan(db, *self._data()), scan_id)
+            finally:
+                del os.environ["SIMVAULT_DB_PASSWORD"]
+                if old is None:
+                    del sys.modules[module]
+                else:
+                    sys.modules[module] = old
+            connect = log[0][1]
+            self.assertEqual((connect["port"], connect["password"]), (port, "geheim"))
+            sql = [entry[1] for entry in log if entry[0] in ("execute", "executemany")]
+            self.assertTrue(any(marker in s for s in sql))
+            inserts = [s for s in sql if s.startswith("INSERT")]
+            self.assertTrue(all("%s" in s and "?" not in s for s in inserts))
+            self.assertEqual("RETURNING id" in inserts[0], kind == "postgresql")
+            self.assertEqual(log[-2:], [("commit",), ("close",)])
+
+    def test_missing_driver_message(self):
+        import database
+        import builtins
+        real = builtins.__import__
+
+        def no_driver(name, *a, **k):
+            if name in ("pymysql", "mysql.connector", "mysql"):
+                raise ImportError(name)
+            return real(name, *a, **k)
+
+        builtins.__import__ = no_driver
+        try:
+            ok, message = database.test_connection({"type": "mysql"})
+        finally:
+            builtins.__import__ = real
+        self.assertFalse(ok)
+        self.assertIn("pip install pymysql", message)
+
+
+class TranslationTests(unittest.TestCase):
+    def tearDown(self):
+        import i18n
+        i18n.set_language("de")
+
+    def test_tr_exact_patterns_and_german_default(self):
+        import i18n
+        i18n.set_language("de")
+        self.assertEqual(i18n.tr("genutzt"), "genutzt")
+        i18n.set_language("en")
+        self.assertEqual(i18n.tr("genutzt"), "used")
+        self.assertEqual(i18n.tr("Aufräumen (3)"), "Clean up (3)")
+        self.assertEqual(i18n.tr("installiert: 2× Paket; 1 übersprungen"), "installed: 2× package; 1 skipped")
+        self.assertEqual(i18n.tr("Unbekannter Satz"), "Unbekannter Satz")
+        self.assertEqual(i18n.set_language("xx"), "de")
+
+    def test_catalog_has_no_placeholder_mismatch(self):
+        import i18n
+        for src, dst in i18n.EN.items():
+            self.assertEqual(src.count("{}"), dst.count("{}"), src)
+
+    @unittest.skipUnless(HAVE_QT, "PySide6 nicht installiert")
+    def test_translate_widget_once(self):
+        import i18n
+        from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+        QApplication.instance() or QApplication([])
+        i18n.set_language("en")
+        root = QWidget()
+        lay = QVBoxLayout(root)
+        button = QPushButton("Speichern")
+        label = QLabel("Aufräumen (2)")
+        lay.addWidget(button)
+        lay.addWidget(label)
+        i18n.translate_widget(root)
+        self.assertEqual((button.text(), label.text()), ("Save", "Clean up (2)"))
+        label.setText("Aufräumen (5)")                  # nachträglich gesetzter Text
+        i18n.translate_widget(root)
+        i18n.translate_widget(root)
+        self.assertEqual(label.text(), "Clean up (5)")

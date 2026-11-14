@@ -1,2 +1,4 @@
 # Für das Programmfenster (simvault_gui.py). Die Kommandozeile (main.py) braucht nichts davon.
 PySide6>=6.6
+# eingebauter Browser ist Teil von PySide6 (Qt WebEngine); Anmeldungen werden mit AES-256 verschlüsselt:
+cryptography>=41

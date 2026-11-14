@@ -9,16 +9,14 @@
 # - Suchlinks für defekte Dateien
 # - Fehlende CC: CAS-Teile/Objekte, die verwendet werden, aber nicht installiert sind
 #
-# Datenbank-Speicherung:
+# Datenbank-Speicherung (database.py):
 # - SQLite (Standard für Einzelnutzer, leichtgewichtig, serverlos)
-# - Geplant: MySQL/PostgreSQL als separates Plugin für Fortgeschrittene
-#   -> einfach einen weiteren Database Adapter neben _write_sqlite schreiben
+# - MySQL/MariaDB oder PostgreSQL für Fortgeschrittene (Treiber selbst installieren)
 # Optional: Custom Branding (Titel, Logo) – Titel kommt bereits aus config.json
 
 import os
 import csv
 import json
-import sqlite3
 from html import escape
 from collections import Counter
 from datetime import datetime
@@ -59,8 +57,9 @@ def _row_dict(r):
 
 
 def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
-                    db_path="simvault_data.db", formats=("html", "csv", "json", "md"),
+                    db_path=None, formats=("html", "csv", "json", "md"),
                     app_name="SimVault", missing=None, missing_info=None, found=None, conflicts=None,
+                    db=None,
                     logo_path=None):
     """Schreibt die Berichte und gibt die Liste der erzeugten Dateien zurück."""
     os.makedirs(output_dir, exist_ok=True)
@@ -124,8 +123,15 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
         written.append(path)
     if "md" in formats:
         written.append(_write_md(base + ".md", app_name, summary, issues, data_rows, missing, households, found))
-    if db_path:
-        _write_sqlite(db_path, now, summary, issues, data_rows, missing)
+    if db is None and db_path:
+        db = {"type": "sqlite", "sqlite_path": db_path}
+    if db:
+        import database
+        try:
+            database.write_scan(db, now, summary, issues, data_rows, missing)
+        except Exception as e:          # Datenbank nicht erreichbar: Berichte trotzdem schreiben
+            import logging
+            logging.getLogger(__name__).warning("Datenbank nicht beschrieben: %s", e)
     return written
 
 
@@ -209,40 +215,6 @@ def _write_md(path, app_name, summary, issues, data_rows, missing=None, househol
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return path
-
-
-def _write_sqlite(db_path, now, summary, issues, data_rows, missing=None):
-    conn = sqlite3.connect(db_path)
-    try:
-        cur = conn.cursor()
-        cur.executescript("""
-            CREATE TABLE IF NOT EXISTS scans (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created TEXT, mods_folder TEXT, saves TEXT, summary TEXT);
-            CREATE TABLE IF NOT EXISTS mod_files (
-                scan_id INTEGER REFERENCES scans(id), path TEXT, category TEXT, status TEXT,
-                saves TEXT, tray_items INTEGER, size INTEGER, resources INTEGER);
-            CREATE TABLE IF NOT EXISTS issues (
-                scan_id INTEGER REFERENCES scans(id), severity TEXT, kind TEXT, message TEXT, files TEXT);
-            CREATE TABLE IF NOT EXISTS missing_cc (
-                scan_id INTEGER REFERENCES scans(id), id TEXT, kind TEXT, uses INTEGER, used_by TEXT, sources TEXT);
-        """)
-        cur.execute("INSERT INTO scans (created, mods_folder, saves, summary) VALUES (?, ?, ?, ?)",
-                    (now.isoformat(timespec="seconds"), summary["mods_ordner"],
-                     json.dumps(summary["spielstaende"]), json.dumps(summary, ensure_ascii=False)))
-        scan_id = cur.lastrowid
-        cur.executemany("INSERT INTO mod_files VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        [(scan_id, d["datei"], d["kategorie"], d["status"], ", ".join(d["spielstaende"]),
-                          d["tray_eintraege"], d["groesse_bytes"], d["ressourcen"]) for d in data_rows])
-        cur.executemany("INSERT INTO issues VALUES (?, ?, ?, ?, ?)",
-                        [(scan_id, i["schwere"], i["art"], i["meldung"], json.dumps(i["dateien"], ensure_ascii=False))
-                         for i in issues])
-        cur.executemany("INSERT INTO missing_cc VALUES (?, ?, ?, ?, ?, ?)",
-                        [(scan_id, m["id"], m["art"], m["anzahl"], json.dumps(m["verwendet_von"], ensure_ascii=False),
-                          ", ".join(m["quellen"])) for m in (missing or [])])
-        conn.commit()
-    finally:
-        conn.close()
 
 
 _CSS = """

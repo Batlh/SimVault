@@ -13,6 +13,7 @@ from .pages.mods import ModsPage
 from .pages.missing import MissingPage
 from .pages.finder import FinderPage
 from .pages.conflicts import ConflictsPage
+from .pages.web import WebPage
 from .pages.repair import RepairPage
 from .pages.backup import BackupPage
 from .pages.sources import SourcesPage
@@ -28,6 +29,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.resize(1280, 820)
         self.state = AppState(config_path)
+        import i18n
+        i18n.set_language(self.state.cfg.get("ui_language", "auto"))
+        from PySide6.QtWidgets import QApplication
+        self._i18n_filter = i18n.install(QApplication.instance())
         self._update_info = None
 
         central = QWidget()
@@ -71,6 +76,7 @@ class MainWindow(QMainWindow):
             ("Mods", ModsPage(self.state)),
             ("Fehlende CC", MissingPage(self.state)),
             ("CC-Suche", FinderPage(self.state)),
+            ("Websuche", WebPage(self.state)),
             ("Konflikte", ConflictsPage(self.state)),
             ("Reparatur", RepairPage(self.state)),
             ("Backup", BackupPage(self.state)),
@@ -101,12 +107,19 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.status_label, 1)
         bar.addPermanentWidget(self.busy)
         bar.addPermanentWidget(self.cancel)
-        self.state.runner.progress.connect(self.status_label.setText)
+        self.state.runner.progress.connect(self._status)
         self.state.runner.busy_changed.connect(self._busy)
-        self.state.message.connect(self.status_label.setText)
+        self.state.message.connect(self._status)
+        # nachträglich gesetzte Texte (Zähler, Hinweise) ebenfalls übersetzen
+        for signal in (self.nav.currentRowChanged, self.state.analysis_changed, self.state.found_changed,
+                       self.state.config_changed, self.state.runner.busy_changed):
+            signal.connect(lambda *_a: QTimer.singleShot(0, self._retranslate))
 
+        for signal in (self.state.web_search, self.state.open_in_browser, self.state.login_requested):
+            signal.connect(lambda *_a: self.go_to("Websuche"))
         self.state.config_changed.connect(self._apply_branding)
         self._apply_branding()
+        QTimer.singleShot(0, self._retranslate)
         self.update_checked.connect(self._update_checked)
         if first_run and (self.state.cfg.get("updates") or {}).get("check_on_start", True):
             QTimer.singleShot(1500, self.check_update)
@@ -237,6 +250,16 @@ class MainWindow(QMainWindow):
         for i, (page_name, _page) in enumerate(self.pages):
             if page_name == name:
                 self.nav.setCurrentRow(i)
+
+    def _status(self, text):
+        import i18n
+        self.status_label.setText(i18n.tr(text))
+
+    def _retranslate(self):
+        import i18n
+        i18n.translate_widget(self)
+        if i18n.language() != "de":
+            self.setWindowTitle(self.windowTitle().replace("Sims 4 CC-Verwaltung", "Sims 4 CC manager"))
 
     def _busy(self, busy):
         self.busy.setVisible(busy)

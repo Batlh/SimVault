@@ -5,9 +5,10 @@
 # - Die Quellen kommen aus dem Paket "sources" (mitgelieferte Quellen + Erweiterungen aus dem
 #   Ordner "plugins", siehe plugins/README.md). Neue Webseiten lassen sich dort ergänzen.
 # - Erzeugt Suchlinks aus Dateinamen; ein Klick im Report öffnet die Suche im Browser.
-# - Die Seiten werden noch nicht automatisch abgefragt: TSR, CurseForge, Patreon & Co.
-#   blocken einfache Skript-Anfragen (Cloudflare) oder brauchen JavaScript/Login.
-#   Dafür ist die Advanced-Version unten geplant.
+# - TSR, CurseForge, Patreon & Co. blocken einfache Skript-Anfragen (Cloudflare) oder brauchen JavaScript/Login.
+#   Umgesetzt (Seite „Websuche“): eingebauter Browser (Qt WebEngine) mit Anmeldung, verschlüsselten Cookies
+#   (secure_store.py), Download-Verwaltung (downloads.py) und session.render() für Voll-Quellen.
+#   Offen: die Treffer-Parser für die großen Seiten selbst (als Voll-Quellen).
 #
 # Aufgaben:
 # - Automatische Suche basierend auf Dateinamen oder CC-IDs

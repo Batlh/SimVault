@@ -5,8 +5,12 @@
 #   2. Die Quelle lädt die Suchseite (mit session, falls eine Anmeldung nötig ist) und liest die Treffer aus.
 #   3. Sie gibt eine Liste von SearchResult zurück; SimVault zeigt sie mit Vorschaubild an.
 #
-# session: ein Objekt mit get(url) -> Text. SimVault stellt es bereit; bei needs_login = True enthält
-#          es die Cookies aus dem Login-Fenster. Ohne Login reicht urllib (siehe unten).
+# session: von SimVault bereitgestellt (web_session.WebSession), mit den gespeicherten Anmeldungen (Cookies):
+#          session.get(url)        -> Text der Seite (einfacher Abruf)
+#          session.render(url)     -> HTML nach dem Laden im eingebauten Browser (mit JavaScript) – für Seiten,
+#                                     die einfache Abrufe blocken oder ihre Treffer erst per Skript anzeigen
+#          session.get_bytes(url)  -> Rohdaten (z. B. Bilder)
+#          Ohne session (Tests, Kommandozeile) reicht urllib (siehe unten).
 
 import re
 import urllib.request

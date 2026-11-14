@@ -9,10 +9,13 @@ a = Analysis(
     ["simvault_gui.py"],
     pathex=["."],
     datas=[("assets/simvault.png", "assets")],
-    hiddenimports=["sources.builtin", "sources.loader", "sources.base"],
-    excludes=["tkinter", "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
-              "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtMultimedia", "PySide6.QtCharts",
-              "PySide6.QtDataVisualization", "PySide6.QtPdf"],
+    hiddenimports=["sources.builtin", "sources.loader", "sources.base",
+                   # eingebauter Browser (Anmelden, Downloads, Seiten rendern) und verschlüsselte Anmeldungen
+                   "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
+                   "cryptography.hazmat.primitives.ciphers.aead"],
+    # Qt Quick/QML bleiben drin: der Browser (Qt WebEngine) braucht sie
+    excludes=["tkinter", "PySide6.Qt3DCore", "PySide6.QtMultimedia", "PySide6.QtCharts",
+              "PySide6.QtDataVisualization"],
     noarchive=False,
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

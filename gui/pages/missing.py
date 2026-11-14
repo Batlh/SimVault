@@ -61,7 +61,10 @@ class MissingPage(QWidget):
         lib = QSplitter()
         self.households = QListWidget()
         self.detail = QTextBrowser()
-        self.detail.setOpenExternalLinks(True)
+        # Links (CC-Listen in der Beschreibung, Suche) im eingebauten Browser öffnen: dort heruntergeladene
+        # CC wird gleich installiert
+        self.detail.setOpenLinks(False)
+        self.detail.anchorClicked.connect(self._link)
         lib.addWidget(self.households)
         lib.addWidget(self.detail)
         lib.setSizes([320, 700])
@@ -127,7 +130,19 @@ class MissingPage(QWidget):
             f" · {html.escape(h['datum'])}</p>"
             f"<p><b>Fehlt:</b> {html.escape(', '.join(f'{n}× {a}' for a, n in arts.most_common()))}</p>"
             f"<p>{desc}</p>"
-            f"<p><a href='{html.escape(h['suche'])}'>Im Web nach diesem Haushalt und seiner CC suchen</a></p>")
+            f"<p><a href='simvault:suche'>In SimVault im Netz suchen</a> · "
+            f"<a href='{html.escape(h['suche'])}'>Google-Suche nach Haushalt und CC</a></p>"
+            "<p style='color:#8b949e'>Links öffnen sich im eingebauten Browser – was du dort herunterlädst, "
+            "installiert SimVault gleich.</p>")
+
+    def _link(self, url):
+        if url.scheme() == "simvault":
+            row = self.households.currentRow()
+            if 0 <= row < len(self._households):
+                h = self._households[row]
+                self.state.web_search.emit(" ".join(t for t in (h["ersteller"], h["name"]) if t))
+        elif url.scheme() in ("http", "https"):
+            self.state.open_in_browser.emit(url.toString())
 
     def _copy_menu(self, pos):
         idx = self.table.indexAt(pos)

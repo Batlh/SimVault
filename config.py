@@ -13,7 +13,7 @@
 # - Datenbank-Typ (sqlite, mysql)
 # Optional / geplant:
 # - Custom Branding (z.B. Logo, App-Name)
-# - Spracheinstellungen (future i18n Support)
+# - Spracheinstellung der Oberfläche (ui_language, siehe i18n.py)
 # - MySQL/PostgreSQL als Plugin für Fortgeschrittene
 
 import os
@@ -44,12 +44,20 @@ DEFAULT_CONFIG = {
     "report_folder": "./reports",
     "report_formats": ["html", "csv", "json", "md"],
     "database": {
-        "type": "sqlite",       # options: sqlite, mysql (future)
+        "type": "sqlite",       # sqlite, mysql oder postgresql (Treiber: pymysql bzw. psycopg) – siehe database.py
         "sqlite_path": "simvault_data.db",
         "mysql": {
             "enabled": False,
             "host": "localhost",
+            "port": 3306,
             "user": "root",
+            "password": "",     # besser: Umgebungsvariable SIMVAULT_DB_PASSWORD
+            "database": "simvault",
+        },
+        "postgresql": {
+            "host": "localhost",
+            "port": 5432,
+            "user": "postgres",
             "password": "",
             "database": "simvault",
         },
@@ -58,10 +66,12 @@ DEFAULT_CONFIG = {
         "app_name": "SimVault",
         "logo_path": "",
     },
+    "download_folder": "",      # Downloads aus der Websuche (leer = %APPDATA%\\SimVault\\Downloads)
+    "auto_install": True,       # Downloads aus dem eingebauten Browser sofort entpacken und installieren
     "updates": {
         "check_on_start": True,  # beim Programmstart auf GitHub nach einer neueren Version schauen
     },
-    "language": "en",           # future: i18n support
+    "ui_language": "auto",      # Sprache der Oberfläche: auto (wie Windows), de, en – siehe i18n.py
 }
 
 

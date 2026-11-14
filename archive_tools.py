@@ -104,11 +104,11 @@ def _run(cmd):
                           stdin=subprocess.DEVNULL, errors="replace")
 
 
-def _bsdtar_members(tar, archive):
+def _bsdtar_members(tar, archive, extensions=RELEVANT):
     out = _run([tar, "-tf", archive])
     if out.returncode != 0:
         raise RuntimeError(out.stderr.strip()[:200] or "Liste nicht lesbar")
-    return [m for m in out.stdout.splitlines() if m.lower().endswith(RELEVANT)]
+    return [m for m in out.stdout.splitlines() if m.lower().endswith(tuple(extensions))]
 
 
 SIGNATURES = [(b"Rar!\x1a\x07", ".rar"), (b"7z\xbc\xaf\x27\x1c", ".7z"), (b"PK\x03\x04", ".zip")]
@@ -149,9 +149,10 @@ def _reason(kind, text, returncode=None):
     return first[:120] or "Fehler beim Entpacken"
 
 
-def extract_relevant(archive, dest, tools, fmt=None):
+def extract_relevant(archive, dest, tools, fmt=None, extensions=RELEVANT):
     """Entpackt die relevanten Dateien (Pakete, verschachtelte Archive) nach dest.
     fmt: tatsächliches Format (".rar"/".7z"), falls die Dateiendung nicht stimmt.
+    extensions: welche Dateien (Standard: Pakete und Archive; Downloads brauchen auch Scripts und Tray-Dateien).
     Wirft RuntimeError mit einer verständlichen Begründung, wenn es mit keinem Entpacker geht."""
     fmt = fmt or os.path.splitext(archive)[1].lower()
     reasons = []
@@ -161,16 +162,16 @@ def extract_relevant(archive, dest, tools, fmt=None):
         try:
             if kind == "7z":
                 cmd = [path, "x", "-y", "-bd", f"-p{DUMMY_PASSWORD}", f"-o{dest}", archive]
-                out = _run(cmd + [f"*{ext}" for ext in RELEVANT] + ["-r"])
+                out = _run(cmd + [f"*{ext}" for ext in extensions] + ["-r"])
                 ok, code = out.returncode in (0, 1), out.returncode   # 1 = Warnung
             elif kind == "unrar":
-                cmd = [path, "x", "-y", "-r", "-p-", "-idq", archive] + [f"*{ext}" for ext in RELEVANT]
+                cmd = [path, "x", "-y", "-r", "-p-", "-idq", archive] + [f"*{ext}" for ext in extensions]
                 out = _run(cmd + [dest + os.sep])
                 ok, code = out.returncode in (0, 1, 10), out.returncode   # 10 = nichts Passendes drin
             else:  # bsdtar
                 code = None
                 try:
-                    members = _bsdtar_members(path, archive)
+                    members = _bsdtar_members(path, archive, extensions)
                 except RuntimeError as e:
                     reasons.append(_reason(kind, str(e)))
                     continue
