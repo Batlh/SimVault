@@ -7,7 +7,7 @@
 # - Fehlende Einträge in einer bestehenden config.json werden mit Standardwerten ergänzt.
 #
 # Standardwerte für:
-# - Sims-, Mods-, Savegames-, Tray- und Backup-Pfad
+# - Sims-, Mods-, Savegames-, Tray-, Spiel- und Backup-Pfad
 # - Backup-Modus (full, delta, selective)
 # - Berichtformate (HTML, CSV, JSON, MD)
 # - Datenbank-Typ (sqlite, mysql)
@@ -27,6 +27,7 @@ DEFAULT_CONFIG = {
     "mods_folder": "",          # leer = <sims_folder>/Mods
     "savegames_folder": "",     # leer = <sims_folder>/saves
     "tray_folder": "",          # leer = <sims_folder>/Tray
+    "game_folder": "",          # Spiel-Installation, leer = automatisch suchen (optional, für sichere Fehlend-Erkennung)
     "backup_folder": "./backups",
     "backup_mode": "full",      # full, delta, selective
     "report_folder": "./reports",
@@ -92,6 +93,9 @@ def resolve_paths(config):
     for key, sub in (("mods_folder", "Mods"), ("savegames_folder", "saves"), ("tray_folder", "Tray")):
         if not cfg.get(key) and sims:
             cfg[key] = os.path.join(sims, sub)
+    if not cfg.get("game_folder"):
+        from missing_cc import find_game_folder
+        cfg["game_folder"] = find_game_folder()
     return cfg
 
 

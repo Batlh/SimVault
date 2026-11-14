@@ -100,7 +100,12 @@ def _walk_protobuf(buf, start, end, known, found, depth):
                 return False
             if length and depth < MAX_DEPTH:
                 if not _walk_protobuf(buf, pos, sub_end, known, found, depth + 1):
-                    _walk_packed_varints(buf, pos, sub_end, known, found)
+                    if not _walk_packed_varints(buf, pos, sub_end, known, found) and length % 8 == 0:
+                        # gepackte 64-Bit-Liste (so stehen z. B. die Outfit-Teile der Sims)
+                        for i in range(pos, sub_end, 8):
+                            value = int.from_bytes(buf[i:i + 8], "little")
+                            if value in known:
+                                found.add(value)
             pos = sub_end
         elif wire == 5:
             if pos + 4 > end:

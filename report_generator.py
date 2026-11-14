@@ -7,6 +7,7 @@
 # - Probleme im Mods-Ordner (zu tief, beschädigt, Duplikate, Konflikte, ...)
 # - Pro Mod-Datei: Kategorie, Status (genutzt / ungenutzt / ...), in welchen Spielständen, Tray
 # - Suchlinks für defekte Dateien
+# - Fehlende CC: CAS-Teile/Objekte, die verwendet werden, aber nicht installiert sind
 #
 # Datenbank-Speicherung:
 # - SQLite (Standard für Einzelnutzer, leichtgewichtig, serverlos)
@@ -59,7 +60,7 @@ def _row_dict(r):
 
 def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
                     db_path="simvault_data.db", formats=("html", "csv", "json", "md"),
-                    app_name="SimVault"):
+                    app_name="SimVault", missing=None, missing_info=None):
     """Schreibt die Berichte und gibt die Liste der erzeugten Dateien zurück."""
     os.makedirs(output_dir, exist_ok=True)
     now = datetime.now()
@@ -79,6 +80,8 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
         "kategorien": dict(category_count),
         "status": dict(status_count),
         "groesse_ungenutzt_bytes": sum(r["mod"].size for r in rows if r["status"] == "ungenutzt"),
+        "fehlend": None if missing is None else len(missing),
+        "fehlend_info": missing_info,
     }
     issues = [{"schwere": i.severity, "art": i.kind, "meldung": i.message, "dateien": i.files}
               for i in mod_scan.issues]
@@ -86,19 +89,22 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
     written = []
     base = os.path.join(output_dir, f"report_{stamp}")
     if "html" in formats:
-        written.append(_write_html(base + ".html", app_name, summary, issues, rows, broken_names))
+        written.append(_write_html(base + ".html", app_name, summary, issues, rows, broken_names, missing))
     if "csv" in formats:
         written.append(_write_csv(base + ".csv", data_rows))
+        if missing:
+            written.append(_write_missing_csv(base + "_fehlend.csv", missing))
     if "json" in formats:
         path = base + ".json"
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"zusammenfassung": summary, "probleme": issues, "mods": data_rows},
+            json.dump({"zusammenfassung": summary, "probleme": issues, "fehlend": missing or [],
+                       "mods": data_rows},
                       f, indent=2, ensure_ascii=False)
         written.append(path)
     if "md" in formats:
-        written.append(_write_md(base + ".md", app_name, summary, issues, data_rows))
+        written.append(_write_md(base + ".md", app_name, summary, issues, data_rows, missing))
     if db_path:
-        _write_sqlite(db_path, now, summary, issues, data_rows)
+        _write_sqlite(db_path, now, summary, issues, data_rows, missing)
     return written
 
 
@@ -116,7 +122,16 @@ def _write_csv(path, data_rows):
     return path
 
 
-def _write_md(path, app_name, summary, issues, data_rows):
+def _write_missing_csv(path, missing):
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow(["ID", "Art", "Anzahl", "Verwendet von", "Quellen"])
+        for m in missing:
+            writer.writerow([m["id"], m["art"], m["anzahl"], " | ".join(m["verwendet_von"]), ", ".join(m["quellen"])])
+    return path
+
+
+def _write_md(path, app_name, summary, issues, data_rows, missing=None):
     lines = [f"# {app_name} – Bericht vom {summary['erstellt'].replace('T', ' ')}", "",
              f"- Mods-Ordner: `{summary['mods_ordner']}`",
              f"- Spielstände: {', '.join(summary['spielstaende']) or '—'}",
@@ -128,6 +143,16 @@ def _write_md(path, app_name, summary, issues, data_rows):
             lines.append(f"- **{i['schwere']} – {i['art']}**: {i['meldung']}")
             lines += [f"  - `{f}`" for f in i["dateien"][:50]]
         lines.append("")
+    if missing is not None:
+        lines += ["## Fehlende CC", "", f"_{summary.get('fehlend_info') or ''}_", ""]
+        if missing:
+            lines += ["| ID | Art | Anzahl | Verwendet von | Quellen |", "|---|---|---|---|---|"]
+            for m in missing:
+                who = ", ".join(m["verwendet_von"][:5]).replace("|", "\\|")
+                lines.append(f"| `{m['id']}` | {m['art']} | {m['anzahl']} | {who} | {', '.join(m['quellen'])} |")
+        else:
+            lines.append("Keine fehlende CC gefunden.")
+        lines.append("")
     lines += ["## Mods", "", "| Datei | Kategorie | Status | Spielstände | Tray |", "|---|---|---|---|---|"]
     for d in data_rows:
         name = d["datei"].replace("|", "\\|")
@@ -137,7 +162,7 @@ def _write_md(path, app_name, summary, issues, data_rows):
     return path
 
 
-def _write_sqlite(db_path, now, summary, issues, data_rows):
+def _write_sqlite(db_path, now, summary, issues, data_rows, missing=None):
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
@@ -150,6 +175,8 @@ def _write_sqlite(db_path, now, summary, issues, data_rows):
                 saves TEXT, tray_items INTEGER, size INTEGER, resources INTEGER);
             CREATE TABLE IF NOT EXISTS issues (
                 scan_id INTEGER REFERENCES scans(id), severity TEXT, kind TEXT, message TEXT, files TEXT);
+            CREATE TABLE IF NOT EXISTS missing_cc (
+                scan_id INTEGER REFERENCES scans(id), id TEXT, kind TEXT, uses INTEGER, used_by TEXT, sources TEXT);
         """)
         cur.execute("INSERT INTO scans (created, mods_folder, saves, summary) VALUES (?, ?, ?, ?)",
                     (now.isoformat(timespec="seconds"), summary["mods_ordner"],
@@ -161,6 +188,9 @@ def _write_sqlite(db_path, now, summary, issues, data_rows):
         cur.executemany("INSERT INTO issues VALUES (?, ?, ?, ?, ?)",
                         [(scan_id, i["schwere"], i["art"], i["meldung"], json.dumps(i["dateien"], ensure_ascii=False))
                          for i in issues])
+        cur.executemany("INSERT INTO missing_cc VALUES (?, ?, ?, ?, ?, ?)",
+                        [(scan_id, m["id"], m["art"], m["anzahl"], json.dumps(m["verwendet_von"], ensure_ascii=False),
+                          ", ".join(m["quellen"])) for m in (missing or [])])
         conn.commit()
     finally:
         conn.close()
@@ -196,7 +226,7 @@ rows.forEach(r=>tb.appendChild(r))});
 """
 
 
-def _write_html(path, app_name, summary, issues, rows, broken_names):
+def _write_html(path, app_name, summary, issues, rows, broken_names, missing=None):
     e = escape
     out = [f"<!DOCTYPE html><html lang='de'><head><meta charset='utf-8'><title>{e(app_name)} Bericht</title>",
            f"<style>{_CSS}</style></head><body><div class='wrap'>",
@@ -208,6 +238,8 @@ def _write_html(path, app_name, summary, issues, rows, broken_names):
     for status in STATUS_ORDER:
         if status in summary["status"]:
             out.append(f"<div class='card' title='{e(STATUS_HELP.get(status, ''))}'><b>{summary['status'][status]}</b>{e(status)}</div>")
+    if missing is not None:
+        out.append(f"<div class='card'><b>{len(missing)}</b>fehlende CC</div>")
     if summary["groesse_ungenutzt_bytes"]:
         out.append(f"<div class='card'><b>{_mb(summary['groesse_ungenutzt_bytes'])}</b>ungenutzte CC</div>")
     out.append("</div>")
@@ -218,6 +250,22 @@ def _write_html(path, app_name, summary, issues, rows, broken_names):
             files = "".join(f"<li>{e(f)}</li>" for f in i["dateien"])
             out.append(f"<div class='issue {e(i['schwere'])}'><b>{e(i['schwere'])} – {e(i['art'])}:</b> "
                        f"{e(i['meldung'])}<ul>{files}</ul></div>")
+
+    if missing is not None:
+        out.append("<h2>Fehlende CC</h2><div class='meta'>CAS-Teile und Objekte, die in Spielständen oder der "
+                   "Bibliothek verwendet werden, aber in keinem installierten Paket stecken. Im Spiel erscheinen "
+                   "sie unsichtbar oder fehlen. Die ID hilft beim Wiederfinden (z. B. mit Sims 4 Studio).<br>"
+                   f"{e(summary.get('fehlend_info') or '')}</div>")
+        if missing:
+            out.append("<table><tr><th>ID</th><th>Art</th><th>Anzahl</th><th>Verwendet von</th><th>Quellen</th></tr>")
+            for m in missing:
+                who = m["verwendet_von"]
+                shown = "<br>".join(e(w) for w in who[:8]) + (f"<br>… {len(who) - 8} weitere" if len(who) > 8 else "")
+                out.append(f"<tr><td><code>{e(m['id'])}</code></td><td>{e(m['art'])}</td><td>{m['anzahl']}</td>"
+                           f"<td>{shown}</td><td>{e(', '.join(m['quellen']))}</td></tr>")
+            out.append("</table>")
+        else:
+            out.append("<p>Keine fehlende CC gefunden. 🎉</p>")
 
     if broken_names:
         out.append("<h2>Defekte Dateien neu suchen</h2><table><tr><th>Datei</th><th>Suchen auf</th></tr>")

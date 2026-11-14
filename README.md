@@ -24,6 +24,11 @@ which Custom Content you actually use, what is broken, and what can go.
   - **not provable** — tuning/gameplay mods that aren't always stored in the save
   - **not checkable** — script mods
 
+- 🧩 **Missing CC Detection** — finds CAS parts and objects that are used in savegames or in
+  saved library households but are no longer installed, and shows who uses them
+  (Sim names, households, lots, library entries). EA content is recognized by its smaller IDs;
+  if the game folder is found (or set as `game_folder`), all game IDs are excluded as well.
+
 - 📄 **Report Generator** — HTML (sortable, filterable, no internet needed), CSV (Excel-ready),
   JSON and Markdown, plus a local SQLite database with every scan.
 
@@ -40,8 +45,7 @@ which Custom Content you actually use, what is broken, and what can go.
 
 ## 🗺️ Roadmap (planned)
 
-- 🔎 **Missing CC Detection** — find CC that is used in a savegame but no longer installed
-  (needs the savegame schema and an index of the game's own content)
+- 🔎 **Missing CC Detection for library lots & rooms** (`.blueprint`/`.room` use a different encoding)
 - 🌐 **CC Search Engine** — real result lists (title, image, download link, description) instead of search links
   - fixed sources as core modules (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims, NewSea)
   - extensible plugin architecture for additional, user-defined sources

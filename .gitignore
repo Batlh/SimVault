@@ -33,3 +33,6 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+# Zwischenspeicher der Spiel-IDs
+game_ids_cache.json

@@ -58,7 +58,9 @@ SEARCH_ENGINES = {
     "Patreon": "https://www.patreon.com/search?q={query}",
     "LoversLab": "https://www.loverslab.com/search/?q={query}",
     "SexySims": "https://sexysims.info/browse.php?tag={query}",
-    "NewSea": "http://www.newseasims.com/sims3-search.php?query={query}",
+    # Die alte URL (sims3-search.php) durchsucht Sims-3-Inhalte; eine Sims-4-Such-URL ist nicht
+    # bekannt (die Seite blockt automatische Abrufe), daher Google-Suche direkt auf newseasims.com
+    "NewSea": "https://www.google.com/search?q=site%3Anewseasims.com+sims+4+{query}",
     "Google": "https://www.google.com/search?q=sims+4+{query}",
 }
 

@@ -36,7 +36,7 @@ def _check_folder(path, label):
 
 def cmd_config(cfg, args):
     for key in ("sims_folder", "mods_folder", "savegames_folder", "tray_folder",
-                "backup_folder", "report_folder"):
+                "game_folder", "backup_folder", "report_folder"):
         path = cfg.get(key, "")
         state = "ok" if path and os.path.isdir(path) else "fehlt"
         print(f"{key:18} {state:6} {path}")
@@ -50,7 +50,7 @@ def _scan_mods(cfg):
     return scan_mods_folder(cfg["mods_folder"], progress=lambda i, n: _progress(f"{i}/{n} Dateien"))
 
 
-def _print_summary(mod_scan, usage):
+def _print_summary(mod_scan, usage, missing=None):
     from collections import Counter
     print(f"\n{len(mod_scan.mods)} Mod-Dateien gefunden.")
     for cat, n in Counter(m.category for m in mod_scan.mods).most_common():
@@ -59,15 +59,24 @@ def _print_summary(mod_scan, usage):
         print("\nNutzung:")
         for status, n in Counter(r["status"] for r in usage).most_common():
             print(f"  {status:18} {n}")
+    if missing is not None:
+        if missing:
+            print(f"\nFehlende CC: {len(missing)} verschiedene Teile/Objekte")
+            for m in missing[:10]:
+                print(f"  {m['id']}  {m['art']:9} {m['anzahl']:>4}×  {', '.join(m['verwendet_von'][:3])}")
+            if len(missing) > 10:
+                print(f"  … {len(missing) - 10} weitere im Bericht")
+        else:
+            print("\nFehlende CC: keine gefunden")
     if mod_scan.issues:
         print(f"\n{len(mod_scan.issues)} Problem(e):")
         for issue in mod_scan.issues:
             print(f"  [{issue.severity}] {issue.kind}: {len(issue.files)} Datei(en)")
 
 
-def _write_report(cfg, mod_scan, usage=None, saves=None):
+def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_info=None):
     from report_generator import generate_report
-    files = generate_report(mod_scan, usage, saves,
+    files = generate_report(mod_scan, usage, saves, missing=missing, missing_info=missing_info,
                             output_dir=cfg["report_folder"],
                             db_path=cfg["database"].get("sqlite_path"),
                             formats=cfg["report_formats"],
@@ -98,9 +107,9 @@ def cmd_analyze(cfg, args):
         saves = find_saves(cfg["savegames_folder"])
         if not args.all_saves:
             saves = saves[:1]
-    missing = [s for s in saves if not os.path.isfile(s)]
-    if missing:
-        print("Spielstand nicht gefunden: " + ", ".join(missing))
+    missing_files = [s for s in saves if not os.path.isfile(s)]
+    if missing_files:
+        print("Spielstand nicht gefunden: " + ", ".join(missing_files))
         return 1
     if not saves:
         print(f"Kein Spielstand gefunden in {cfg['savegames_folder']} – es wird nur die Bibliothek geprüft.")
@@ -109,8 +118,24 @@ def cmd_analyze(cfg, args):
     print("Lese Spielstände und Bibliothek …")
     tray = None if args.no_tray else cfg.get("tray_folder")
     usage = analyze_usage(mod_scan, saves, tray_folder=tray, progress=_progress)
-    _print_summary(mod_scan, usage)
-    _write_report(cfg, mod_scan, usage, saves)
+
+    missing = missing_info = None
+    if not args.no_missing:
+        from missing_cc import find_missing, index_game_content
+        known = set(mod_scan.id_lookup())
+        game = cfg.get("game_folder")
+        if game and os.path.isdir(game):
+            print(f"Lese Spielinhalte aus {game} (beim ersten Mal etwas länger) …")
+            known |= index_game_content(game, cache_path=cfg.get("game_cache", "game_ids_cache.json"),
+                                        progress=_progress)
+            missing_info = f"Abgleich mit Mods-Ordner und Spielordner ({game})"
+        else:
+            missing_info = ("Abgleich mit dem Mods-Ordner; Spielordner nicht gefunden – "
+                            "EA-Inhalte werden an ihren kleineren IDs erkannt")
+        missing = find_missing(saves, tray, known, progress=_progress)
+
+    _print_summary(mod_scan, usage, missing)
+    _write_report(cfg, mod_scan, usage, saves, missing, missing_info)
     return 0
 
 
@@ -135,6 +160,7 @@ def build_parser():
     a.add_argument("--save", nargs="+", help="bestimmte Spielstand-Datei(en)")
     a.add_argument("--all-saves", action="store_true", help="alle Spielstände statt nur den neuesten")
     a.add_argument("--no-tray", action="store_true", help="Bibliothek (Tray) nicht einbeziehen")
+    a.add_argument("--no-missing", action="store_true", help="keine Suche nach fehlender CC")
     a.set_defaults(func=cmd_analyze)
 
     s = sub.add_parser("scan", help="nur den Mods-Ordner prüfen")
