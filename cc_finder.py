@@ -105,6 +105,16 @@ def _ids_in_entries(entries, wanted):
     return {e.instance for e in entries if e.instance in wanted}
 
 
+SIMS_HINTS = ("sims", "ts4", "s4", "mod", "cc", "package", "tray", "wicked", "mccc", "patreon", "tsr", "cas")
+
+
+def looks_like_sims(path):
+    """Grobe Einschätzung, ob ein (nicht lesbares) Archiv Sims-Inhalte enthalten könnte."""
+    import re
+    words = re.split(r"[^a-z0-9]+", path.lower())
+    return any(w.startswith(h) or w.endswith(h) for w in words if w for h in SIMS_HINTS)
+
+
 TEMP_PREFIX = "simvault_fund_"
 FREE_SPACE_RESERVE = 1024 ** 3   # mindestens 1 GB frei lassen
 STALE_TEMP_SECONDS = 30 * 60
@@ -184,7 +194,7 @@ class _Search:
         self.checked = 0
 
     def _fail(self, where, reason):
-        self.unreadable.append({"pfad": where, "grund": reason})
+        self.unreadable.append({"pfad": where, "grund": reason, "sims": looks_like_sims(where)})
 
     def _space_ok(self, needed):
         try:
@@ -211,13 +221,20 @@ class _Search:
                     self.hits.append({"pfad": path, "archiv_eintrag": None, "ids": ids,
                                       "groesse": os.path.getsize(path)})
             elif low.endswith(".zip"):
-                self.zip(path, path, "", 0)
+                try:
+                    self.zip(path, path, "", 0)
+                except zipfile.BadZipFile:
+                    real = archive_tools.sniff(path)   # z. B. ein RAR mit der Endung .zip
+                    if real in archive_tools.EXTERNAL_ARCHIVES:
+                        self.external(path, path, "", 0, fmt=real)
+                    else:
+                        self._fail(path, "kein gültiges ZIP (beschädigt oder anderes Format)")
             elif low.endswith(archive_tools.EXTERNAL_ARCHIVES):
                 self.external(path, path, "", 0)
         except (dbpf.DBPFError, OSError, zipfile.BadZipFile, RuntimeError, EOFError) as e:
             log.debug("%s übersprungen: %s", path, e)
             if low.endswith(".zip"):
-                self._fail(path, f"ZIP defekt oder geschützt ({e})")
+                self._fail(path, f"ZIP nicht lesbar ({e})")
 
     # -- ZIP: direkt lesen, ohne zu entpacken -----------------------------------
     def zip(self, zip_path, outer, prefix, depth):
@@ -258,15 +275,16 @@ class _Search:
 
     def nested(self, path, outer, prefix, depth):
         try:
-            if path.lower().endswith(".zip"):
+            real = archive_tools.sniff(path) or os.path.splitext(path)[1].lower()
+            if real == ".zip":
                 self.zip(path, outer, prefix, depth)
             else:
-                self.external(path, outer, prefix, depth)
+                self.external(path, outer, prefix, depth, fmt=real)
         except (zipfile.BadZipFile, OSError, RuntimeError, EOFError) as e:
             self._fail(_chain(outer, prefix), str(e))
 
     # -- RAR/7z: kurz entpacken, prüfen, sofort löschen -------------------------
-    def external(self, archive, outer, prefix, depth):
+    def external(self, archive, outer, prefix, depth, fmt=None):
         where = _chain(outer, prefix) if prefix else outer
         if not self.tools:
             self._fail(where, "kein Entpacker gefunden – 7-Zip installieren")
@@ -283,7 +301,7 @@ class _Search:
         dest = tempfile.mkdtemp(dir=self.work_dir, prefix="x_")
         try:
             try:
-                archive_tools.extract_relevant(archive, dest, self.tools)
+                archive_tools.extract_relevant(archive, dest, self.tools, fmt=fmt or archive_tools.sniff(archive))
             except RuntimeError as e:
                 self._fail(where, str(e))
                 return
@@ -348,35 +366,70 @@ def summarize(hits, parts):
     return result, len(found)
 
 
-def restore(found, mods_folder, exclude=()):
+def fetch(outer, entry, target, tools=None, work_dir=None):
+    """Holt eine gefundene Datei an ihren Zielort.
+    outer: Datei auf der Platte; entry: Weg ins Archiv ("a.zip → b.rar → x.package") oder None."""
+    if not entry:
+        shutil.copy2(outer, target)
+        return
+    segments = entry.split(" → ")
+    scratch = tempfile.mkdtemp(prefix=TEMP_PREFIX, dir=work_dir)
+    try:
+        current = outer
+        for i, segment in enumerate(segments):
+            last = i == len(segments) - 1
+            dest = target if last else os.path.join(tempfile.mkdtemp(dir=scratch), os.path.basename(segment))
+            if (archive_tools.sniff(current) or os.path.splitext(current)[1].lower()) == ".zip":
+                with zipfile.ZipFile(current) as z, z.open(segment) as src, open(dest, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+            else:
+                if tools is None:
+                    tools = archive_tools.find_tools()
+                archive_tools.extract_member(current, segment, dest, tools, work_dir=scratch)
+            current = dest
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def restore(found, mods_folder, exclude=(), tools=None, work_dir=None, progress=None):
     """Kopiert gefundene Pakete nach <Mods>/SimVault_wiederhergestellt. Überschreibt nichts.
     exclude: Textstücke – Funde, deren Datei oder Fundort eines davon enthält, werden übersprungen.
-    Gibt die Liste der neu angelegten Dateien zurück."""
+    Gibt (angelegt, fehlgeschlagen) zurück: Liste der neuen Dateien und [(Datei, Grund)]."""
     target_dir = os.path.join(mods_folder, RESTORE_SUBFOLDER)
     os.makedirs(target_dir, exist_ok=True)
-    created = []
+    created, failed = [], []
     patterns = [x.lower() for x in exclude if x]
     for item in found:
-        haystack = f"{item['pfad']} {item.get('archiv_eintrag') or ''}".lower()
+        haystack = f"{item['pfad']} {item.get('archiv_eintrag') or ''} {item['datei']}".lower()
         if any(p in haystack for p in patterns):
             continue
         target = os.path.join(target_dir, item["datei"])
         if os.path.exists(target):
             continue
-        try:
-            if item.get("temp_datei") and os.path.isfile(item["temp_datei"]):
-                shutil.copy2(item["temp_datei"], target)          # aus RAR/7z oder verschachteltem Archiv
-            elif item["archiv_eintrag"] and item["pfad"].lower().endswith(".zip"):
-                with zipfile.ZipFile(item["pfad"]) as z, z.open(item["archiv_eintrag"]) as src, \
-                        open(target, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
-            elif item["archiv_eintrag"]:
-                archive_tools.extract_member(item["pfad"], item["archiv_eintrag"], target,
-                                             archive_tools.find_tools())
-            else:
-                shutil.copy2(item["pfad"], target)
-        except (OSError, RuntimeError, KeyError, zipfile.BadZipFile) as e:
-            log.error("%s konnte nicht zurückgeholt werden: %s", item["datei"], e)
+        if progress:
+            progress(f"hole {item['datei']}")
+        if item.get("temp_datei") and os.path.isfile(item["temp_datei"]):
+            shutil.copy2(item["temp_datei"], target)     # schon bei der Suche zwischengespeichert
+            created.append(target)
+            continue
+        # erster Fundort, bei Problemen die weiteren Fundorte derselben Datei
+        locations = [(item["pfad"], item.get("archiv_eintrag"))]
+        for where in item.get("weitere_fundorte") or []:
+            outer, _sep, entry = where.partition(" → ")
+            locations.append((outer, entry or None))
+        error = None
+        for outer, entry in locations:
+            try:
+                fetch(outer, entry, target, tools, work_dir)
+                error = None
+                break
+            except (OSError, RuntimeError, KeyError, zipfile.BadZipFile) as e:
+                error = e
+                if os.path.exists(target):
+                    os.remove(target)
+        if error is not None:
+            failed.append((item["datei"], str(error)))
+            log.error("%s konnte nicht zurückgeholt werden: %s", item["datei"], error)
             continue
         created.append(target)
-    return created
+    return created, failed

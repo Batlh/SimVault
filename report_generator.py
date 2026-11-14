@@ -174,8 +174,9 @@ def _write_md(path, app_name, summary, issues, data_rows, missing=None, househol
         for item in found["dateien"]:
             where = f"{item['pfad']} → {item['archiv_eintrag']}" if item["archiv_eintrag"] else item["pfad"]
             lines.append(f"- **{item['anzahl_ids']} Teile** ({', '.join(item['arten'])}): `{where}`")
-        for u in found["nicht_lesbar"]:
-            lines.append(f"- nicht durchsuchbar: `{u['pfad']}` ({u['grund']})")
+        for u in sorted(found["nicht_lesbar"], key=lambda x: not x.get("sims")):
+            mark = " **(Sims-Bezug)**" if u.get("sims") else ""
+            lines.append(f"- nicht durchsuchbar{mark}: `{u['pfad']}` ({u['grund']})")
         lines.append("")
     if households:
         lines += ["## Bibliothek: Einträge mit fehlender CC", ""]
@@ -336,12 +337,20 @@ def _write_html(path, app_name, summary, issues, rows, broken_names, missing=Non
                 out.append(f"<tr><td>{e(item['datei'])}</td><td>{item['anzahl_ids']}</td>"
                            f"<td>{e(', '.join(item['arten']))}</td>"
                            f"<td>{e(', '.join(item.get('verwendet_von', [])[:5]))}</td><td>{where}</td></tr>")
-            out.append("</table><p>Zurückholen: <code>python main.py find --restore</code> "
-                       "(kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts)</p>")
+            out.append("</table><p>Zurückholen ohne neue Suche: <code>py -3 main.py restore</code> "
+                       "(kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts; "
+                       "einzelne auslassen mit <code>--ohne TEXT</code>)</p>")
         if found["nicht_lesbar"]:
-            out.append("<div class='issue'><b>Nicht durchsuchbar</b><ul>"
-                       + "".join(f"<li>{e(u['pfad'])} – {e(u['grund'])}</li>" for u in found["nicht_lesbar"])
-                       + "</ul></div>")
+            sims = [u for u in found["nicht_lesbar"] if u.get("sims")]
+            rest = [u for u in found["nicht_lesbar"] if not u.get("sims")]
+            if sims:
+                out.append("<div class='issue Fehler'><b>Nicht durchsuchbar – mit Sims-Bezug</b><ul>"
+                           + "".join(f"<li>{e(u['pfad'])} – {e(u['grund'])}</li>" for u in sims) + "</ul></div>")
+            if rest:
+                out.append(f"<details><summary>{len(rest)} weitere nicht durchsuchbare Archive ohne erkennbaren "
+                           "Sims-Bezug</summary><ul class='meta'>"
+                           + "".join(f"<li>{e(u['pfad'])} – {e(u['grund'])}</li>" for u in rest)
+                           + "</ul></details>")
 
     if households:
         out.append("<h2>Bibliothek: Einträge mit fehlender CC</h2><div class='meta'>Gespeicherte Haushalte, "

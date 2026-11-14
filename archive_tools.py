@@ -111,48 +111,94 @@ def _bsdtar_members(tar, archive):
     return [m for m in out.stdout.splitlines() if m.lower().endswith(RELEVANT)]
 
 
-def extract_relevant(archive, dest, tools):
+SIGNATURES = [(b"Rar!\x1a\x07", ".rar"), (b"7z\xbc\xaf\x27\x1c", ".7z"), (b"PK\x03\x04", ".zip")]
+
+
+def sniff(path):
+    """Echtes Archivformat anhand der ersten Bytes (".rar", ".7z", ".zip" oder None) –
+    für Archive mit falscher Endung, z. B. ein RAR namens .zip."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        return None
+    for magic, ext in SIGNATURES:
+        if head.startswith(magic):
+            return ext
+    return None
+
+
+NEEDS_7ZIP = "dieses 7z kann nur 7-Zip öffnen – 7-Zip installieren (winget install 7zip.7zip)"
+
+
+def _reason(kind, text, returncode=None):
+    """Kurze, verständliche Begründung aus der Ausgabe eines Entpackers."""
+    t = (text or "").lower()
+    if kind == "unrar" and returncode in (3, 11) or any(
+            w in t for w in ("password", "passwort", "encrypt", "verschlüssel")):
+        return "mit Passwort geschützt"
+    if kind == "bsdtar" and ("lzma" in t or "ppmd" in t or "bcj" in t or "unsupported" in t
+                             or "not supported" in t):
+        return NEEDS_7ZIP
+    if any(w in t for w in ("damaged", "corrupt", "crc", "unexpected end", "truncated", "beschädigt")):
+        return "Archiv beschädigt oder unvollständig"
+    if "can not open" in t or "cannot open" in t or "not an archive" in t or "unrecognized archive" in t:
+        return "kein gültiges Archiv"
+    first = next((line.strip() for line in (text or "").splitlines()
+                  if line.strip() and "error exit delayed" not in line.lower()), "")
+    return first[:120] or "Fehler beim Entpacken"
+
+
+def extract_relevant(archive, dest, tools, fmt=None):
     """Entpackt die relevanten Dateien (Pakete, verschachtelte Archive) nach dest.
-    Wirft RuntimeError mit einer verständlichen Begründung, wenn es nicht geht."""
-    low = archive.lower()
-    errors = []
+    fmt: tatsächliches Format (".rar"/".7z"), falls die Dateiendung nicht stimmt.
+    Wirft RuntimeError mit einer verständlichen Begründung, wenn es mit keinem Entpacker geht."""
+    fmt = fmt or os.path.splitext(archive)[1].lower()
+    reasons = []
     for kind, path in tools:
-        if kind == "unrar" and not low.endswith(".rar"):
+        if kind == "unrar" and fmt != ".rar":
             continue
         try:
             if kind == "7z":
                 cmd = [path, "x", "-y", "-bd", f"-p{DUMMY_PASSWORD}", f"-o{dest}", archive]
-                cmd += [f"*{ext}" for ext in RELEVANT] + ["-r"]
-                out = _run(cmd)
-                ok = out.returncode in (0, 1)  # 1 = Warnung (z. B. nichts Passendes gefunden)
+                out = _run(cmd + [f"*{ext}" for ext in RELEVANT] + ["-r"])
+                ok, code = out.returncode in (0, 1), out.returncode   # 1 = Warnung
             elif kind == "unrar":
-                cmd = [path, "x", "-y", "-r", "-p-", "-inul", archive] + [f"*{ext}" for ext in RELEVANT]
+                cmd = [path, "x", "-y", "-r", "-p-", "-idq", archive] + [f"*{ext}" for ext in RELEVANT]
                 out = _run(cmd + [dest + os.sep])
-                ok = out.returncode in (0, 10)  # 10 = keine passenden Dateien
+                ok, code = out.returncode in (0, 1, 10), out.returncode   # 10 = nichts Passendes drin
             else:  # bsdtar
-                members = _bsdtar_members(path, archive)
+                code = None
+                try:
+                    members = _bsdtar_members(path, archive)
+                except RuntimeError as e:
+                    reasons.append(_reason(kind, str(e)))
+                    continue
                 ok, out = True, None
                 for i in range(0, len(members), 100):  # Befehlszeile nicht zu lang werden lassen
                     out = _run([path, "-xf", archive, "-C", dest] + members[i:i + 100])
                     ok = ok and out.returncode == 0
             if ok:
                 return
-            msg = (out.stderr or out.stdout or "").strip() if out else ""
-            if "password" in msg.lower() or "passwort" in msg.lower() or "encrypted" in msg.lower():
-                raise RuntimeError("mit Passwort geschützt")
-            errors.append(f"{kind}: {msg[:150] or 'Fehler beim Entpacken'}")
+            reasons.append(_reason(kind, (out.stderr or "") + "\n" + (out.stdout or "") if out else "", code))
         except subprocess.TimeoutExpired:
-            errors.append(f"{kind}: Zeitüberschreitung")
+            reasons.append("Zeitüberschreitung beim Entpacken")
         except OSError as e:
-            errors.append(f"{kind}: {e}")
-    raise RuntimeError("; ".join(errors) or "kein passender Entpacker")
+            reasons.append(f"Entpacker nicht startbar ({e})")
+    if not reasons:
+        raise RuntimeError(NEEDS_7ZIP if fmt == ".7z" else "kein passender Entpacker – 7-Zip installieren")
+    # die aussagekräftigste Begründung nach vorn
+    for preferred in ("mit Passwort geschützt", NEEDS_7ZIP, "Archiv beschädigt oder unvollständig"):
+        if preferred in reasons:
+            raise RuntimeError(preferred)
+    raise RuntimeError("; ".join(dict.fromkeys(reasons)))
 
 
-def extract_member(archive, member, target, tools):
+def extract_member(archive, member, target, tools, work_dir=None):
     """Holt eine einzelne Datei aus einem RAR/7z-Archiv und speichert sie als target."""
     import tempfile
-    with tempfile.TemporaryDirectory(prefix="simvault_") as tmp:
-        extract_relevant(archive, tmp, tools)
+    with tempfile.TemporaryDirectory(prefix="simvault_", dir=work_dir) as tmp:
+        extract_relevant(archive, tmp, tools, fmt=sniff(archive))
         source = os.path.join(tmp, member)
         if not os.path.isfile(source):
             raise RuntimeError(f"{member} nicht im Archiv gefunden")

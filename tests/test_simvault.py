@@ -473,11 +473,11 @@ class FinderTests(unittest.TestCase):
             self.assertEqual(grouped[0]["verwendet_von"], ["Bella Grusel"])
             other = os.path.join(tmp, "Mods2")
             os.makedirs(other)
-            self.assertEqual(cc_finder.restore(grouped, other, exclude=["ivka"]), [])
+            self.assertEqual(cc_finder.restore(grouped, other, exclude=["ivka"]), ([], []))
 
             # erneutes Zurückholen überschreibt nichts
             self.assertEqual(cc_finder.restore([{"datei": "Sofa.package", "pfad": "egal", "archiv_eintrag": None}],
-                                               mods), [])
+                                               mods), ([], []))
         finally:
             shutil.rmtree(tmp)
 
@@ -549,7 +549,8 @@ class ArchiveTests(unittest.TestCase):
                  {"id": f"0x{MISSING_OBJ:016X}", "art": "Objekt", "verwendet_von": []}]
         found, n = cc_finder.summarize(hits, parts)
         mods = os.path.join(self.tmp, "Mods")
-        created = cc_finder.restore(found, mods)
+        created, failed = cc_finder.restore(found, mods)
+        self.assertEqual(failed, [])
         self.assertEqual(sorted(os.path.basename(c) for c in created), ["Ivka_Hair.package", "Sofa.package"])
 
     def test_7zip(self):
@@ -587,7 +588,7 @@ class ArchiveTests(unittest.TestCase):
         (hits, _), _work = self._search([("7z", shutil.which("7z"))], keep_hits=False)
         hits = [h for h in hits if "Ivka" in h["archiv_eintrag"]]
         found, _ = cc_finder.summarize(hits, [{"id": f"0x{MISSING_CAS:016X}", "art": "Haare", "verwendet_von": []}])
-        created = cc_finder.restore(found, os.path.join(self.tmp, "Mods3"))
+        created, _failed = cc_finder.restore(found, os.path.join(self.tmp, "Mods3"))
         self.assertEqual([os.path.basename(c) for c in created], ["Ivka_Hair.package"])
 
     def test_password_and_no_tool(self):
@@ -624,5 +625,100 @@ class SetupTests(unittest.TestCase):
                 saved = json.load(f)
             self.assertEqual((saved["sims_folder"], saved["game_folder"], saved["extractor"], saved["search_drives"]),
                              (sims, "", "none", False))
+        finally:
+            shutil.rmtree(tmp)
+
+
+class ReasonAndHintTests(unittest.TestCase):
+    def test_reasons(self):
+        r = archive_tools._reason
+        self.assertEqual(r("bsdtar", "tar.EXE: LZMA codec is unsupported\ntar.EXE: Error exit delayed"),
+                         archive_tools.NEEDS_7ZIP)
+        self.assertEqual(r("bsdtar", "tar.EXE: Encryption is not supported"), "mit Passwort geschützt")
+        self.assertEqual(r("unrar", "", 11), "mit Passwort geschützt")
+        self.assertEqual(r("bsdtar", "tar.EXE: Damaged 7-Zip archive"), "Archiv beschädigt oder unvollständig")
+        self.assertEqual(r("7z", "irgendwas\nError exit delayed"), "irgendwas")
+
+    def test_sims_hint(self):
+        self.assertTrue(cc_finder.looks_like_sims(r"C:\Users\Hades\Downloads\MCAS Full Set - 05 June 2025.7z"))
+        self.assertTrue(cc_finder.looks_like_sims(r"E:\Download\MTS_EgorBlagov_sims-mod-assistant-win32-x64.7z"))
+        self.assertFalse(cc_finder.looks_like_sims(r"C:\Users\Hades\Downloads\ffmpeg-8.1.2-full_build.7z"))
+        self.assertFalse(cc_finder.looks_like_sims(r"G:\Games\Forza Horizon 6\Content\media\stripped\stringtables\BR.zip"))
+
+
+@unittest.skipUnless(shutil.which("7z"), "7-Zip nicht installiert")
+class NestedRestoreTests(unittest.TestCase):
+    def test_find_then_restore_from_report(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            sims = os.path.join(tmp, "Electronic Arts", "Die Sims 4")
+            mods = os.path.join(sims, "Mods")
+            os.makedirs(mods)
+            os.makedirs(os.path.join(sims, "saves"))
+            dbpf.write_package(os.path.join(mods, "Installiert.package"), [(dbpf.TYPE_CASP, 0, CAS_ID, b"x")])
+            build_real_layout_save(os.path.join(sims, "saves", "Slot_00000001.save"))
+
+            work = os.path.join(tmp, "bau")
+            os.makedirs(work)
+            hair = os.path.join(work, "Ivka_Hair.package")
+            dbpf.write_package(hair, [(dbpf.TYPE_CASP, 0, MISSING_CAS, b"hair")])
+            sofa = os.path.join(work, "Sofa.package")
+            dbpf.write_package(sofa, [(dbpf.TYPE_OBJD, 0, MISSING_OBJ, b"sofa")])
+            # inneres 7z mit den Haaren, inneres ZIP mit dem Sofa – beide in einem äußeren ZIP (wie 打包.zip)
+            subprocess.run(["7z", "a", "-bd", os.path.join(work, "haushalt.7z"), "Ivka_Hair.package"],
+                           cwd=work, capture_output=True, check=True)
+            with _zipfile.ZipFile(os.path.join(work, "moebel.zip"), "w", _zipfile.ZIP_DEFLATED) as z:
+                z.write(sofa, "Mods/所有mod/Sofa.package")
+            fund = os.path.join(tmp, "D")
+            os.makedirs(fund)
+            with _zipfile.ZipFile(os.path.join(fund, "打包.zip"), "w") as z:
+                z.write(os.path.join(work, "haushalt.7z"), "a/haushalt.7z")
+                z.write(os.path.join(work, "moebel.zip"), "b/moebel.zip")
+            # ein 7z, das fälschlich .zip heißt
+            subprocess.run(["7z", "a", "-bd", "-t7z", os.path.join(fund, "falsch.zip"), "Ivka_Hair.package"],
+                           cwd=work, capture_output=True, check=True)
+
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"sims_folder": sims, "report_folder": os.path.join(tmp, "reports"),
+                           "extractor": shutil.which("7z"), "search_drives": False,
+                           "database": {"sqlite_path": os.path.join(tmp, "db.sqlite")}}, f)
+            self.assertEqual(main.main(["--config", cfg_path, "find", fund]), 0)
+            restore_dir = os.path.join(mods, cc_finder.RESTORE_SUBFOLDER)
+            self.assertFalse(os.path.exists(restore_dir))  # find ohne --restore ändert nichts
+
+            report = [r for r in os.listdir(os.path.join(tmp, "reports")) if r.endswith(".json")][0]
+            with open(os.path.join(tmp, "reports", report), encoding="utf-8") as f:
+                fs = json.load(f)["fundstellen"]
+            locations = {d["datei"]: [f"{d['pfad']} → {d['archiv_eintrag']}"] + d["weitere_fundorte"]
+                         for d in fs["dateien"]}
+            self.assertEqual(sorted(locations), ["Ivka_Hair.package", "Sofa.package"])
+            self.assertTrue(any(x.endswith("b/moebel.zip → Mods/所有mod/Sofa.package") for x in locations["Sofa.package"]))
+            self.assertTrue(any("falsch.zip" in x for x in locations["Ivka_Hair.package"]))   # falsche Endung erkannt
+            self.assertTrue(any("a/haushalt.7z → Ivka_Hair.package" in x for x in locations["Ivka_Hair.package"]))
+            self.assertEqual(fs["nicht_lesbar"], [])
+
+            self.assertEqual(main.main(["--config", cfg_path, "restore", "--ohne", "nichts-davon"]), 0)
+            self.assertEqual(sorted(os.listdir(restore_dir)), ["Ivka_Hair.package", "Sofa.package"])
+            self.assertEqual(dbpf.read_index(os.path.join(restore_dir, "Sofa.package"))[0].instance, MISSING_OBJ)
+            # Temp-Ordner aufgeräumt
+            self.assertEqual([d for d in os.listdir(tempfile.gettempdir()) if d.startswith(cc_finder.TEMP_PREFIX)], [])
+        finally:
+            shutil.rmtree(tmp)
+
+
+class RestoreFallbackTests(unittest.TestCase):
+    def test_uses_next_location_if_first_fails(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            good = os.path.join(tmp, "gut.zip")
+            pkg = os.path.join(tmp, "x.package")
+            dbpf.write_package(pkg, [(dbpf.TYPE_CASP, 0, MISSING_CAS, b"")])
+            with _zipfile.ZipFile(good, "w") as z:
+                z.write(pkg, "Mods/x.package")
+            item = {"datei": "x.package", "pfad": os.path.join(tmp, "weg.zip"), "archiv_eintrag": "Mods/x.package",
+                    "weitere_fundorte": [f"{good} → Mods/x.package"]}
+            created, failed = cc_finder.restore([item], os.path.join(tmp, "Mods"))
+            self.assertEqual((len(created), failed), (1, []))
         finally:
             shutil.rmtree(tmp)

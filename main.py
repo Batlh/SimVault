@@ -8,6 +8,7 @@
 #   python main.py find                 fehlende CC auf dem PC suchen (Downloads, alte Mods-Ordner …)
 #   python main.py find "D:\Alte Mods" --restore   … in bestimmten Ordnern, Funde zurückholen
 #   python main.py find --ganzer-pc     zusätzlich das komplette Laufwerk C: durchsuchen
+#   python main.py restore --ohne WickedWhims   Funde aus dem letzten Suchbericht zurückholen
 #   python main.py backup mods          Backup des Mods-Ordners (Modus aus config.json)
 #   python main.py backup saves --mode delta
 #   python main.py config               zeigt die verwendeten Pfade
@@ -206,9 +207,10 @@ def cmd_find(cfg, args):
                                             work_dir=work_dir, tools=tools, keep_hits=args.restore,
                                             max_archive_mb=cfg.get("max_archive_mb", 4096))
         found, n_found = cc_finder.summarize(hits, parts)
-        restored = None
+        restored = failed = None
         if found and args.restore:
-            restored = cc_finder.restore(found, cfg["mods_folder"], exclude=args.ohne or [])
+            restored, failed = cc_finder.restore(found, cfg["mods_folder"], exclude=args.ohne or [], tools=tools,
+                                                 work_dir=work_dir, progress=_progress)
     for item in found:
         item.pop("temp_datei", None)  # Temp-Ordner ist jetzt gelöscht
 
@@ -221,21 +223,79 @@ def cmd_find(cfg, args):
             print(f"        für: {', '.join(item['verwendet_von'][:3])}")
     if len(found) > 20:
         print(f"  … {len(found) - 20} weitere im Bericht")
-    if unreadable:
-        print(f"\n{len(unreadable)} Archiv(e) konnten nicht durchsucht werden:")
-        for u in unreadable[:10]:
-            print(f"  {u['pfad']}  ({u['grund']})")
-
+    _print_unreadable(unreadable)
     if restored is not None:
-        print(f"\n{len(restored)} Datei(en) zurückgeholt nach "
-              f"{os.path.join(cfg['mods_folder'], cc_finder.RESTORE_SUBFOLDER)}")
+        _print_restored(cfg, restored, failed)
     elif found:
-        print('\nZum Zurückholen in den Mods-Ordner: python main.py find --restore '
+        print('\nZurückholen ohne neue Suche: py -3 main.py restore   '
               '(einzelne Funde auslassen: --ohne WickedWhims)')
 
     _write_report(cfg, mod_scan, None, saves, missing, info,
                   found={"dateien": found, "ordner": folders, "nicht_lesbar": unreadable,
                          "gefunden": n_found, "gesucht": len(parts)})
+    return 0
+
+
+def _print_unreadable(unreadable):
+    if not unreadable:
+        return
+    sims = [u for u in unreadable if u.get("sims")]
+    print(f"\n{len(unreadable)} Archiv(e) konnten nicht durchsucht werden, davon {len(sims)} mit Sims-Bezug:")
+    for u in sims[:15]:
+        print(f"  {u['pfad']}  – {u['grund']}")
+    if len(unreadable) > len(sims):
+        print(f"  … {len(unreadable) - len(sims)} weitere ohne erkennbaren Sims-Bezug (siehe Bericht)")
+
+
+def _print_restored(cfg, restored, failed):
+    import cc_finder
+    print(f"\n{len(restored)} Datei(en) zurückgeholt nach "
+          f"{os.path.join(cfg['mods_folder'], cc_finder.RESTORE_SUBFOLDER)}")
+    for name, reason in (failed or [])[:10]:
+        print(f"  nicht geklappt: {name} – {reason}")
+    if restored:
+        print('Tipp: Mit "py -3 main.py analyze --all-saves" prüfst du, was jetzt noch fehlt.')
+
+
+def _latest_find_report(folder):
+    import glob
+    import json
+    for path in sorted(glob.glob(os.path.join(folder, "report_*.json")), reverse=True):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if (data.get("fundstellen") or {}).get("dateien"):
+            return path, data
+    return None, None
+
+
+def cmd_restore(cfg, args):
+    """Holt die Funde aus dem letzten Suchbericht zurück – ohne erneute Suche."""
+    import json
+    import tempfile
+    import archive_tools
+    import cc_finder
+    if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
+        return 1
+    if args.bericht:
+        path = args.bericht
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        path, data = _latest_find_report(cfg["report_folder"])
+    found = ((data or {}).get("fundstellen") or {}).get("dateien") or []
+    if not found:
+        print('Kein Suchbericht mit Funden gefunden – zuerst "py -3 main.py find" ausführen.')
+        return 1
+    print(f"Bericht: {path} – {len(found)} Datei(en)")
+    tools = archive_tools.tools_from_config(cfg)
+    temp_base = cfg.get("temp_folder") or None
+    with tempfile.TemporaryDirectory(prefix=cc_finder.TEMP_PREFIX, dir=temp_base) as work_dir:
+        restored, failed = cc_finder.restore(found, cfg["mods_folder"], exclude=args.ohne or [], tools=tools,
+                                             work_dir=work_dir, progress=_progress)
+    _print_restored(cfg, restored, failed)
     return 0
 
 
@@ -293,6 +353,9 @@ def cmd_setup(cfg, args):
     elif current:
         default = next((str(i) for i, (_k, p) in enumerate(tools, 1)
                         if os.path.normcase(p) == os.path.normcase(current)), str(custom))
+    if tools and not any(k == "7z" for k, _p in tools):
+        print("   Hinweis: Ohne 7-Zip lassen sich viele 7z-Archive nicht öffnen (UnRAR kann nur RAR, das\n"
+              "   Windows-tar keine LZMA-Komprimierung). Empfehlung: winget install 7zip.7zip")
     choice = _ask("   Auswahl", default)
     if choice == "0":
         raw["extractor"] = "none"
@@ -351,6 +414,11 @@ def build_parser():
     f.add_argument("--ohne", nargs="+", metavar="TEXT",
                    help="beim Zurückholen Funde auslassen, deren Datei/Fundort diesen Text enthält")
     f.set_defaults(func=cmd_find)
+
+    r = sub.add_parser("restore", help="Funde aus dem letzten Suchbericht in den Mods-Ordner zurückholen")
+    r.add_argument("--ohne", nargs="+", metavar="TEXT", help="Funde auslassen, deren Datei/Fundort TEXT enthält")
+    r.add_argument("--bericht", help="bestimmter Bericht (.json) statt des neuesten")
+    r.set_defaults(func=cmd_restore)
 
     st = sub.add_parser("setup", help="einrichten: Ordner, Entpacker für RAR/7z, Laufwerke")
     st.set_defaults(func=cmd_setup)

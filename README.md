@@ -38,14 +38,18 @@ which Custom Content you actually use, what is broken, and what can go.
   skipped), or any folder you name — including **`.zip`, `.rar` and `.7z` archives** (also nested ones).
   RAR/7z are briefly unpacked to a temp folder (only packages and nested archives), searched and cleaned up,
   using 7-Zip, WinRAR (UnRAR) or the `tar` built into Windows 10/11 — choose which in `setup`.
-  Password-protected, broken or very large archives are reported with the reason.
+  Archives with a wrong extension (e.g. a RAR named `.zip`) are recognized by their content.
+  Password-protected, broken or very large archives are reported with a clear reason; those that look
+  Sims-related are listed first, the rest is collapsed.
   Disk space: every archive is deleted from the temp folder right after it was checked — found or not.
   Only with `--restore` the found packages themselves stay until they are copied. Before unpacking,
   free space is checked; leftovers of aborted runs are removed on the next start; ZIPs are read streamed.
   The temp folder can be moved to another drive with `temp_folder` in `config.json`.
   `--ganzer-pc` also scans the whole C: drive.
-  With `--restore` the found packages are copied to `Mods/SimVault_wiederhergestellt` (nothing is overwritten);
-  `--ohne TEXT` leaves out finds whose name or location contains TEXT. The same file found in several places
+  `python main.py restore` copies the finds of the last search to `Mods/SimVault_wiederhergestellt` without
+  searching again — also out of nested archives (ZIP in ZIP, RAR in ZIP …); if one location fails, the
+  other locations of the same file are tried. Nothing is overwritten; `--ohne TEXT` leaves out finds whose
+  name or location contains TEXT. (`find --restore` searches and restores in one go.) The same file found in several places
   is listed once, with all locations.
 
 - 📄 **Report Generator** — HTML (sortable, filterable, no internet needed), CSV (Excel-ready),
@@ -103,7 +107,7 @@ which Custom Content you actually use, what is broken, and what can go.
     python main.py find                 # search your PC for missing CC (Downloads, old Mods folders …)
     python main.py find "D:\Old Mods" --restore   # search a folder and copy finds into Mods
     python main.py find --ganzer-pc     # also scan the whole C: drive
-    python main.py find --restore --ohne WickedWhims   # restore finds, but skip WickedWhims files
+    python main.py restore --ohne WickedWhims   # copy the finds of the last search into Mods (no new search)
     python main.py backup mods          # backup (mode from config.json)
     python main.py backup saves --mode delta
     python main.py setup                # set up: folders, RAR/7z unpacker, drives
