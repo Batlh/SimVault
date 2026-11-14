@@ -29,6 +29,9 @@ DEFAULT_CONFIG = {
     "tray_folder": "",          # leer = <sims_folder>/Tray
     "game_folder": "",          # Spiel-Installation, leer = automatisch suchen (optional, für sichere Fehlend-Erkennung)
     "search_folders": [],       # Ordner für "find" – leer = Downloads, alte Mods-Ordner, Mod-Manager … automatisch
+    "search_drives": True,      # "find" durchsucht zusätzlich alle weiteren Laufwerke (D:, E:, USB …)
+    "extractor": "",            # Entpacker für RAR/7z: leer = automatisch, Pfad zu 7z.exe/UnRAR.exe/tar.exe, "none" = aus
+    "max_archive_mb": 4096,     # größere Archive werden bei der Suche übersprungen
     "backup_folder": "./backups",
     "backup_mode": "full",      # full, delta, selective
     "report_folder": "./reports",

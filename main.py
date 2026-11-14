@@ -11,6 +11,7 @@
 #   python main.py backup mods          Backup des Mods-Ordners (Modus aus config.json)
 #   python main.py backup saves --mode delta
 #   python main.py config               zeigt die verwendeten Pfade
+#   python main.py setup                einrichten: Sims-Ordner, Spielordner, Entpacker für RAR/7z, Laufwerke
 
 import os
 import sys
@@ -38,11 +39,16 @@ def _check_folder(path, label):
 
 
 def cmd_config(cfg, args):
+    import archive_tools
     for key in ("sims_folder", "mods_folder", "savegames_folder", "tray_folder",
                 "game_folder", "backup_folder", "report_folder"):
         path = cfg.get(key, "")
         state = "ok" if path and os.path.isdir(path) else "fehlt"
         print(f"{key:18} {state:6} {path}")
+    tools = archive_tools.tools_from_config(cfg)
+    print(f"{'extractor':18} {'ok' if tools else 'aus':6} "
+          f"{(archive_tools.TOOL_NAMES[tools[0][0]] + ' – ' + tools[0][1]) if tools else 'RAR/7z werden übersprungen'}")
+    print(f"{'search_drives':18} {'ja' if cfg.get('search_drives', True) else 'nein'}")
     print(f"\nKonfigurationsdatei: {os.path.abspath(args.config)}")
     return 0
 
@@ -160,7 +166,9 @@ def cmd_find(cfg, args):
     import cc_finder
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
-    folders = cc_finder.search_locations(cfg, args.folders, drives=not args.ohne_laufwerke,
+    import archive_tools
+    folders = cc_finder.search_locations(cfg, args.folders,
+                                         drives=cfg.get("search_drives", True) and not args.ohne_laufwerke,
                                          whole_pc=args.ganzer_pc)
     if not folders:
         print("Keine Suchordner gefunden. Ordner angeben: python main.py find \"D:\\Alte Mods\"")
@@ -178,9 +186,25 @@ def cmd_find(cfg, args):
     print(f"{len(parts)} fehlende Teile. Durchsuche:")
     for f in folders:
         print(f"  {f}")
+    tools = archive_tools.tools_from_config(cfg)
+    if tools:
+        kind, path = tools[0]
+        print(f"Entpacker für RAR/7z: {archive_tools.TOOL_NAMES[kind]} ({path})")
+    else:
+        print("Kein Entpacker für RAR/7z – diese Archive werden übersprungen. "
+              "Tipp: winget install 7zip.7zip, dann py -3 main.py setup")
     wanted = {int(p["id"], 16) for p in parts}
-    hits, unreadable = cc_finder.search(folders, wanted, exclude=[cfg["mods_folder"]], progress=_progress)
-    found, n_found = cc_finder.summarize(hits, parts)
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="simvault_fund_") as work_dir:
+        hits, unreadable = cc_finder.search(folders, wanted, exclude=[cfg["mods_folder"]], progress=_progress,
+                                            work_dir=work_dir, tools=tools,
+                                            max_archive_mb=cfg.get("max_archive_mb", 4096))
+        found, n_found = cc_finder.summarize(hits, parts)
+        restored = None
+        if found and args.restore:
+            restored = cc_finder.restore(found, cfg["mods_folder"], exclude=args.ohne or [])
+    for item in found:
+        item.pop("temp_datei", None)  # Temp-Ordner ist jetzt gelöscht
 
     print(f"\nGefunden: {n_found} von {len(parts)} fehlenden Teilen in {len(found)} Datei(en).")
     for item in found[:20]:
@@ -192,16 +216,13 @@ def cmd_find(cfg, args):
     if len(found) > 20:
         print(f"  … {len(found) - 20} weitere im Bericht")
     if unreadable:
-        print(f"\n{len(unreadable)} Archiv(e) konnten nicht durchsucht werden (.rar/.7z/defekt) – "
-              "bitte entpacken und erneut suchen:")
-        for path in unreadable[:10]:
-            print(f"  {path}")
+        print(f"\n{len(unreadable)} Archiv(e) konnten nicht durchsucht werden:")
+        for u in unreadable[:10]:
+            print(f"  {u['pfad']}  ({u['grund']})")
 
-    if found and args.restore:
-        import cc_finder as cf
-        created = cf.restore(found, cfg["mods_folder"], exclude=args.ohne or [])
-        print(f"\n{len(created)} Datei(en) zurückgeholt nach "
-              f"{os.path.join(cfg['mods_folder'], cf.RESTORE_SUBFOLDER)}")
+    if restored is not None:
+        print(f"\n{len(restored)} Datei(en) zurückgeholt nach "
+              f"{os.path.join(cfg['mods_folder'], cc_finder.RESTORE_SUBFOLDER)}")
     elif found:
         print('\nZum Zurückholen in den Mods-Ordner: python main.py find --restore '
               '(einzelne Funde auslassen: --ohne WickedWhims)')
@@ -221,6 +242,72 @@ def cmd_backup(cfg, args):
     result = backup_manager(mode, source, cfg["backup_folder"], file_list=args.files)
     print(f"Backup ({mode}) erstellt: {os.path.abspath(result)}")
     return 0
+
+
+def _ask(prompt, default=""):
+    shown = f" [{default}]" if default else ""
+    try:
+        answer = input(f"{prompt}{shown}: ").strip().strip('"')
+    except EOFError:
+        answer = ""
+    return answer or default
+
+
+def cmd_setup(cfg, args):
+    """Fragt die wichtigsten Einstellungen ab und speichert sie in config.json."""
+    import archive_tools
+    from missing_cc import find_game_folder
+    raw = cfg_mod.load_config(args.config)
+    print("SimVault einrichten – Enter übernimmt den Vorschlag in [Klammern].\n")
+
+    # 1. Sims-Ordner
+    sims = _ask("1) Sims-4-Ordner (mit Mods, saves, Tray)", raw.get("sims_folder") or cfg_mod.find_sims_folder())
+    if sims and not os.path.isdir(sims):
+        print(f"   Achtung: {sims} gibt es nicht – bitte später in config.json korrigieren.")
+    raw["sims_folder"] = sims
+
+    # 2. Spielordner (optional)
+    game = _ask("2) Spielordner (Installation, optional – '-' = keiner)", raw.get("game_folder") or find_game_folder())
+    raw["game_folder"] = "" if game == "-" else game
+
+    # 3. Entpacker für RAR/7z
+    tools = archive_tools.find_tools()
+    print("\n3) Entpacker für RAR- und 7z-Archive bei der CC-Suche:")
+    for i, (kind, path) in enumerate(tools, 1):
+        print(f"   {i}) {archive_tools.TOOL_NAMES[kind]}  ({path})")
+    custom = len(tools) + 1
+    print(f"   {custom}) eigenen Pfad angeben (7z.exe, UnRAR.exe oder tar.exe)")
+    print("   0) keinen – RAR/7z-Archive überspringen")
+    if not tools:
+        print("   Es wurde kein Entpacker gefunden. Empfehlung: 7-Zip installieren (winget install 7zip.7zip)")
+    current = raw.get("extractor", "")
+    default = "1" if tools else "0"
+    if current.lower() == "none":
+        default = "0"
+    elif current:
+        default = next((str(i) for i, (_k, p) in enumerate(tools, 1)
+                        if os.path.normcase(p) == os.path.normcase(current)), str(custom))
+    choice = _ask("   Auswahl", default)
+    if choice == "0":
+        raw["extractor"] = "none"
+    elif choice.isdigit() and 1 <= int(choice) <= len(tools):
+        raw["extractor"] = tools[int(choice) - 1][1]
+    else:
+        path = _ask("   Pfad zum Entpacker", current if choice == str(custom) else choice)
+        if path and os.path.isfile(path) and archive_tools.tool_kind(path):
+            raw["extractor"] = path
+        else:
+            print("   Nicht nutzbar – es wird automatisch gesucht.")
+            raw["extractor"] = ""
+
+    # 4. Laufwerke
+    drives = _ask("\n4) Bei der Suche auch alle weiteren Laufwerke (D:, E:, USB …) durchsuchen? (j/n)",
+                  "j" if raw.get("search_drives", True) else "n")
+    raw["search_drives"] = drives.lower().startswith(("j", "y"))
+
+    cfg_mod.save_config(raw, args.config)
+    print(f"\nGespeichert in {os.path.abspath(args.config)}")
+    return cmd_config(cfg_mod.resolve_paths(raw), args)
 
 
 def build_parser():
@@ -259,6 +346,9 @@ def build_parser():
                    help="beim Zurückholen Funde auslassen, deren Datei/Fundort diesen Text enthält")
     f.set_defaults(func=cmd_find)
 
+    st = sub.add_parser("setup", help="einrichten: Ordner, Entpacker für RAR/7z, Laufwerke")
+    st.set_defaults(func=cmd_setup)
+
     c = sub.add_parser("config", help="verwendete Pfade anzeigen")
     c.set_defaults(func=cmd_config)
     return p
@@ -268,7 +358,11 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
+    first_run = not os.path.exists(args.config)
     cfg = cfg_mod.resolve_paths(cfg_mod.load_config(args.config))
+    if first_run and args.command != "setup":
+        print('Neue config.json angelegt. Tipp: Mit "py -3 main.py setup" richtest du SimVault ein '
+              "(Ordner, Entpacker für RAR/7z, Laufwerke).\n")
     if not args.command:
         args = parser.parse_args(["--config", args.config] + (["-v"] if args.verbose else []) + ["analyze"])
     return args.func(cfg, args)

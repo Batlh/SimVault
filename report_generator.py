@@ -174,8 +174,8 @@ def _write_md(path, app_name, summary, issues, data_rows, missing=None, househol
         for item in found["dateien"]:
             where = f"{item['pfad']} → {item['archiv_eintrag']}" if item["archiv_eintrag"] else item["pfad"]
             lines.append(f"- **{item['anzahl_ids']} Teile** ({', '.join(item['arten'])}): `{where}`")
-        for path in found["nicht_lesbar"]:
-            lines.append(f"- nicht durchsuchbar (entpacken): `{path}`")
+        for u in found["nicht_lesbar"]:
+            lines.append(f"- nicht durchsuchbar: `{u['pfad']}` ({u['grund']})")
         lines.append("")
     if households:
         lines += ["## Bibliothek: Einträge mit fehlender CC", ""]
@@ -339,8 +339,9 @@ def _write_html(path, app_name, summary, issues, rows, broken_names, missing=Non
             out.append("</table><p>Zurückholen: <code>python main.py find --restore</code> "
                        "(kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts)</p>")
         if found["nicht_lesbar"]:
-            out.append("<div class='issue'><b>Nicht durchsuchbar</b> (.rar/.7z/defekt) – bitte entpacken:<ul>"
-                       + "".join(f"<li>{e(p)}</li>" for p in found["nicht_lesbar"]) + "</ul></div>")
+            out.append("<div class='issue'><b>Nicht durchsuchbar</b><ul>"
+                       + "".join(f"<li>{e(u['pfad'])} – {e(u['grund'])}</li>" for u in found["nicht_lesbar"])
+                       + "</ul></div>")
 
     if households:
         out.append("<h2>Bibliothek: Einträge mit fehlender CC</h2><div class='meta'>Gespeicherte Haushalte, "

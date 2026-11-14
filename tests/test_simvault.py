@@ -10,6 +10,7 @@ import sqlite3
 import tempfile
 import unittest
 import zlib
+import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -440,7 +441,8 @@ class FinderTests(unittest.TestCase):
             dbpf.write_package(inner, [(dbpf.TYPE_OBJD, 0, MISSING_OBJ, b"sofa")])
             with _zipfile.ZipFile(os.path.join(fund, "Moebel.zip"), "w") as z:
                 z.write(inner, "Moebel/Sofa.package")
-            open(os.path.join(fund, "Paket.rar"), "wb").close()
+            with open(os.path.join(fund, "Paket.rar"), "wb") as f:
+                f.write(b"Rar!\x1a\x07\x00 kaputt" * 10)
 
             cfg_path = os.path.join(tmp, "config.json")
             with open(cfg_path, "w", encoding="utf-8") as f:
@@ -459,7 +461,7 @@ class FinderTests(unittest.TestCase):
             fs = data["fundstellen"]
             self.assertEqual((fs["gefunden"], fs["gesucht"]), (2, 3))  # OBJ_ID ist hier nicht installiert
             self.assertEqual(sorted(d["datei"] for d in fs["dateien"]), ["Haare_von_Ivka.package", "Sofa.package"])
-            self.assertEqual(fs["nicht_lesbar"], [os.path.join(fund, "Paket.rar")])
+            self.assertEqual([u["pfad"] for u in fs["nicht_lesbar"]], [os.path.join(fund, "Paket.rar")])
 
             # gleiche Datei an zwei Orten wird zusammengefasst; --ohne lässt Funde aus
             os.makedirs(os.path.join(fund, "kopie"))
@@ -496,5 +498,108 @@ class SearchLocationTests(unittest.TestCase):
             self.assertEqual(hits, [])
             if os.name != "nt":
                 self.assertEqual(cc_finder.list_drives(), [])
+        finally:
+            shutil.rmtree(tmp)
+
+
+# --- RAR/7z ------------------------------------------------------------------
+
+import archive_tools
+
+
+@unittest.skipUnless(shutil.which("7z"), "7-Zip nicht installiert")
+class ArchiveTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.src = os.path.join(self.tmp, "src")
+        os.makedirs(os.path.join(self.src, "Mods", "Haare"))
+        dbpf.write_package(os.path.join(self.src, "Mods", "Haare", "Ivka_Hair.package"),
+                           [(dbpf.TYPE_CASP, 0, MISSING_CAS, b"hair")])
+        inner = os.path.join(self.tmp, "inner.package")
+        dbpf.write_package(inner, [(dbpf.TYPE_OBJD, 0, MISSING_OBJ, b"sofa")])
+        with _zipfile.ZipFile(os.path.join(self.src, "Moebel.zip"), "w") as z:
+            z.write(inner, "Sofa.package")
+        with open(os.path.join(self.src, "riesig.bin"), "wb") as f:
+            f.write(b"x" * 1000)  # irrelevant, darf nicht entpackt werden
+        self.fund = os.path.join(self.tmp, "fund")
+        os.makedirs(self.fund)
+        self.archive = os.path.join(self.fund, "Sim_mit_CC.7z")
+        subprocess.run(["7z", "a", "-bd", self.archive, "."], cwd=self.src, capture_output=True, check=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _search(self, tools):
+        work = os.path.join(self.tmp, "work")
+        os.makedirs(work, exist_ok=True)
+        return cc_finder.search([self.fund], {MISSING_CAS, MISSING_OBJ}, work_dir=work, tools=tools), work
+
+    def check_tool(self, tools):
+        (hits, unreadable), work = self._search(tools)
+        self.assertEqual(unreadable, [])
+        by_entry = {h["archiv_eintrag"].replace("\\", "/"): h for h in hits}
+        self.assertEqual(set(by_entry), {"Mods/Haare/Ivka_Hair.package", "Moebel.zip → Sofa.package"})
+        self.assertTrue(all(h["pfad"] == self.archive for h in hits))
+        # nichts Irrelevantes entpackt
+        extracted = [f for _r, _d, fs in os.walk(work) for f in fs]
+        self.assertNotIn("riesig.bin", extracted)
+        # Zurückholen aus dem Temp-Ordner
+        parts = [{"id": f"0x{MISSING_CAS:016X}", "art": "Haare (Steckplatz 2)", "verwendet_von": []},
+                 {"id": f"0x{MISSING_OBJ:016X}", "art": "Objekt", "verwendet_von": []}]
+        found, n = cc_finder.summarize(hits, parts)
+        mods = os.path.join(self.tmp, "Mods")
+        created = cc_finder.restore(found, mods)
+        self.assertEqual(sorted(os.path.basename(c) for c in created), ["Ivka_Hair.package", "Sofa.package"])
+
+    def test_7zip(self):
+        self.check_tool([("7z", shutil.which("7z"))])
+
+    @unittest.skipUnless(shutil.which("bsdtar"), "bsdtar nicht installiert")
+    def test_bsdtar(self):
+        self.check_tool([("bsdtar", shutil.which("bsdtar"))])
+
+    def test_restore_without_temp_reextracts(self):
+        (hits, _), _work = self._search([("7z", shutil.which("7z"))])
+        for h in hits:
+            h.pop("temp_datei", None)
+        hits = [h for h in hits if "Ivka" in h["archiv_eintrag"]]
+        found, _ = cc_finder.summarize(hits, [{"id": f"0x{MISSING_CAS:016X}", "art": "Haare", "verwendet_von": []}])
+        created = cc_finder.restore(found, os.path.join(self.tmp, "Mods3"))
+        self.assertEqual([os.path.basename(c) for c in created], ["Ivka_Hair.package"])
+
+    def test_password_and_no_tool(self):
+        locked = os.path.join(self.fund, "geschuetzt.7z")
+        subprocess.run(["7z", "a", "-bd", "-pgeheim", "-mhe=on", locked, "Moebel.zip"], cwd=self.src,
+                       capture_output=True, check=True)
+        os.remove(self.archive)
+        (hits, unreadable), _ = self._search([("7z", shutil.which("7z"))])
+        self.assertEqual(hits, [])
+        self.assertEqual(len(unreadable), 1)
+        self.assertIn("Passwort", unreadable[0]["grund"])
+        (hits, unreadable), _ = self._search([])
+        self.assertIn("7-Zip installieren", unreadable[0]["grund"])
+
+    def test_tool_choice_from_config(self):
+        seven = shutil.which("7z")
+        self.assertEqual(archive_tools.tools_from_config({"extractor": "none"}), [])
+        self.assertEqual(archive_tools.tools_from_config({"extractor": seven})[0], ("7z", seven))
+        self.assertEqual(archive_tools.tool_kind("C:/Programme/WinRAR/UnRAR.exe"), "unrar")
+
+
+class SetupTests(unittest.TestCase):
+    def test_setup_saves_choices(self):
+        from unittest import mock
+        tmp = tempfile.mkdtemp()
+        try:
+            sims = os.path.join(tmp, "Die Sims 4")
+            os.makedirs(sims)
+            cfg_path = os.path.join(tmp, "config.json")
+            answers = iter([sims, "-", "0", "n"])  # Sims-Ordner, kein Spielordner, kein Entpacker, keine Laufwerke
+            with mock.patch("builtins.input", lambda _p: next(answers)):
+                self.assertEqual(main.main(["--config", cfg_path, "setup"]), 0)
+            with open(cfg_path, encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertEqual((saved["sims_folder"], saved["game_folder"], saved["extractor"], saved["search_drives"]),
+                             (sims, "", "none", False))
         finally:
             shutil.rmtree(tmp)

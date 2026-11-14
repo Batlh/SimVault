@@ -9,20 +9,24 @@
 # Laufwerke: Standardmäßig werden zusätzlich alle weiteren Laufwerke (D:, E:, USB-Sticks …)
 # komplett durchsucht, Systemordner ausgenommen. Mit "ganzer PC" auch das Systemlaufwerk C:.
 #
-# Grenzen: .rar- und .7z-Archive kann Python ohne Zusatzprogramme nicht öffnen – sie werden
-# aufgelistet, damit man sie selbst entpacken kann.
+# Archive: ZIP wird direkt gelesen. RAR und 7z werden mit 7-Zip, WinRAR oder dem tar von
+# Windows 10/11 kurz in einen Temp-Ordner entpackt (nur Pakete und verschachtelte Archive),
+# durchsucht und danach wieder gelöscht. Archive in Archiven werden bis zu 3 Ebenen tief durchsucht.
+# Was nicht geht (kein Entpacker, Passwort, zu groß, defekt), wird mit Grund gemeldet.
 
 import os
 import shutil
 import logging
+import tempfile
 import zipfile
 
 import dbpf
+import archive_tools
 
 log = logging.getLogger(__name__)
 
 RESTORE_SUBFOLDER = "SimVault_wiederhergestellt"
-UNREADABLE_ARCHIVES = (".rar", ".7z")
+MAX_NESTING = 3
 SKIP_DIRS = {"$recycle.bin", "system volume information", "node_modules", ".git", "__pycache__",
              # Systemordner beim Durchsuchen ganzer Laufwerke
              "windows", "program files", "program files (x86)", "programdata", "$windows.~bt", "$windows.~ws",
@@ -101,16 +105,25 @@ def _ids_in_entries(entries, wanted):
     return {e.instance for e in entries if e.instance in wanted}
 
 
-def search(folders, wanted, exclude=(), progress=None):
+def search(folders, wanted, exclude=(), progress=None, work_dir=None, tools=None, max_archive_mb=4096):
     """Durchsucht folders nach Paketen mit IDs aus wanted.
 
+    work_dir: Temp-Ordner für entpackte RAR/7z-Inhalte. Treffer daraus bleiben dort liegen
+              (für --restore), bis der Aufrufer den Ordner löscht.
+    tools:    Entpacker aus archive_tools.find_tools() (None = automatisch suchen)
+
     Gibt (treffer, nicht_lesbar) zurück:
-      treffer:     [{"pfad", "archiv_eintrag" (oder None), "ids": set, "groesse"}]
-      nicht_lesbar: Archive, die nicht geöffnet werden konnten (.rar/.7z/defekt)
+      treffer:      [{"pfad", "archiv_eintrag" (oder None), "ids": set, "groesse", "temp_datei"?}]
+      nicht_lesbar: [{"pfad", "grund"}] – Archive, die nicht durchsucht werden konnten
     """
     hits, unreadable = [], []
     if not wanted:
         return hits, unreadable
+    if tools is None:
+        tools = archive_tools.find_tools()
+    own_work = work_dir is None
+    if own_work:
+        work_dir = tempfile.mkdtemp(prefix="simvault_fund_")
     excluded = {os.path.normcase(os.path.abspath(x)) for x in exclude if x}
     checked = 0
     for folder in folders:
@@ -130,31 +143,111 @@ def search(folders, wanted, exclude=(), progress=None):
                             hits.append({"pfad": path, "archiv_eintrag": None, "ids": ids,
                                          "groesse": os.path.getsize(path)})
                     elif low.endswith(".zip"):
-                        hits.extend(_search_zip(path, wanted))
-                    elif low.endswith(UNREADABLE_ARCHIVES):
-                        unreadable.append(path)
+                        hits.extend(_search_zip(path, path, "", wanted, tools, work_dir, unreadable, 0, progress))
+                    elif low.endswith(archive_tools.EXTERNAL_ARCHIVES):
+                        if not tools:
+                            unreadable.append({"pfad": path, "grund": "kein Entpacker gefunden – 7-Zip installieren"})
+                        elif os.path.getsize(path) > max_archive_mb * 1024 * 1024:
+                            unreadable.append({"pfad": path, "grund": f"größer als {max_archive_mb} MB – übersprungen"})
+                        else:
+                            hits.extend(_search_external(path, path, "", wanted, tools, work_dir, unreadable, 0,
+                                                         progress))
                 except (dbpf.DBPFError, OSError, zipfile.BadZipFile, RuntimeError) as e:
                     log.debug("%s übersprungen: %s", path, e)
                     if low.endswith(".zip"):
-                        unreadable.append(path)
+                        unreadable.append({"pfad": path, "grund": f"ZIP defekt oder geschützt ({e})"})
                 if progress and checked and checked % 500 == 0:
                     progress(f"{checked} Pakete durchsucht")
+    if own_work and not hits:
+        shutil.rmtree(work_dir, ignore_errors=True)
     return hits, unreadable
 
 
-def _search_zip(path, wanted):
+def _chain(prefix, name):
+    return f"{prefix} → {name}" if prefix else name
+
+
+def _search_zip(zip_path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress=None):
+    """Durchsucht ein ZIP. outer/prefix: Fundort für die Anzeige (äußeres Archiv und Weg hinein)."""
     hits = []
-    with zipfile.ZipFile(path) as z:
+    with zipfile.ZipFile(zip_path) as z:
         for info in z.infolist():
-            if not info.filename.lower().endswith(".package") or info.file_size == 0:
+            name = info.filename
+            low = name.lower()
+            if info.file_size == 0 or info.is_dir():
                 continue
-            data = z.read(info)
+            if low.endswith(".package"):
+                data = z.read(info)
+                try:
+                    ids = _ids_in_entries(dbpf.read_index_bytes(data), wanted)
+                except dbpf.DBPFError:
+                    continue
+                if ids:
+                    hit = {"pfad": outer, "archiv_eintrag": _chain(prefix, name), "ids": ids,
+                           "groesse": info.file_size}
+                    if prefix:  # liegt in einem verschachtelten Archiv: für --restore zwischenspeichern
+                        hit["temp_datei"] = _keep(data, name, work_dir)
+                    hits.append(hit)
+            elif low.endswith((".zip",) + archive_tools.EXTERNAL_ARCHIVES) and depth < MAX_NESTING:
+                inner = os.path.join(tempfile.mkdtemp(dir=work_dir, prefix="z_"), os.path.basename(name))
+                with z.open(info) as src, open(inner, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                hits.extend(_search_nested(inner, outer, _chain(prefix, name), wanted, tools, work_dir,
+                                           unreadable, depth + 1, progress))
+    return hits
+
+
+def _keep(data, name, work_dir):
+    path = os.path.join(tempfile.mkdtemp(dir=work_dir, prefix="f_"), os.path.basename(name))
+    with open(path, "wb") as f:
+        f.write(data)
+    return path
+
+
+def _search_nested(path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress):
+    try:
+        if path.lower().endswith(".zip"):
+            return _search_zip(path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress)
+        if not tools:
+            unreadable.append({"pfad": f"{outer} → {prefix}", "grund": "kein Entpacker gefunden – 7-Zip installieren"})
+            return []
+        return _search_external(path, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress)
+    except (zipfile.BadZipFile, OSError, RuntimeError) as e:
+        unreadable.append({"pfad": f"{outer} → {prefix}", "grund": str(e)})
+        return []
+
+
+def _search_external(archive, outer, prefix, wanted, tools, work_dir, unreadable, depth, progress=None):
+    """Entpackt ein RAR/7z kurz in den Temp-Ordner und durchsucht den Inhalt."""
+    if progress:
+        progress(f"entpacke {os.path.basename(archive)}")
+    dest = tempfile.mkdtemp(dir=work_dir, prefix="x_")
+    try:
+        archive_tools.extract_relevant(archive, dest, tools)
+    except RuntimeError as e:
+        unreadable.append({"pfad": _chain(outer, prefix) if prefix else outer, "grund": str(e)})
+        shutil.rmtree(dest, ignore_errors=True)
+        return []
+    hits, keep = [], False
+    for root, _dirs, files in os.walk(dest):
+        for name in files:
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, dest)
+            low = name.lower()
             try:
-                ids = _ids_in_entries(dbpf.read_index_bytes(data), wanted)
-            except dbpf.DBPFError:
+                if low.endswith(".package"):
+                    ids = _ids_in_entries(dbpf.read_index(path), wanted)
+                    if ids:
+                        hits.append({"pfad": outer, "archiv_eintrag": _chain(prefix, rel), "ids": ids,
+                                     "groesse": os.path.getsize(path), "temp_datei": path})
+                        keep = True
+                elif low.endswith((".zip",) + archive_tools.EXTERNAL_ARCHIVES) and depth < MAX_NESTING:
+                    hits.extend(_search_nested(path, outer, _chain(prefix, rel), wanted, tools, work_dir,
+                                               unreadable, depth + 1, progress))
+            except (dbpf.DBPFError, OSError):
                 continue
-            if ids:
-                hits.append({"pfad": path, "archiv_eintrag": info.filename, "ids": ids, "groesse": info.file_size})
+    if not keep:
+        shutil.rmtree(dest, ignore_errors=True)  # nichts gefunden: sofort aufräumen
     return hits
 
 
@@ -167,7 +260,8 @@ def summarize(hits, parts):
     found = set()
     for hit in hits:
         found |= hit["ids"]
-        name = os.path.basename(hit["archiv_eintrag"] or hit["pfad"])
+        inner = (hit["archiv_eintrag"] or hit["pfad"]).split(" → ")[-1]   # letzte Stufe bei Verschachtelung
+        name = os.path.basename(inner.replace("\\", "/"))
         key = (name.lower(), frozenset(hit["ids"]))
         where = f"{hit['pfad']} → {hit['archiv_eintrag']}" if hit["archiv_eintrag"] else hit["pfad"]
         if key in grouped:
@@ -184,6 +278,7 @@ def summarize(hits, parts):
             "verwendet_von": users,
             "groesse": hit["groesse"],
             "weitere_fundorte": [],
+            "temp_datei": hit.get("temp_datei"),
         }
     result = sorted(grouped.values(), key=lambda r: (-r["anzahl_ids"], r["datei"].lower()))
     return result, len(found)
@@ -204,10 +299,20 @@ def restore(found, mods_folder, exclude=()):
         target = os.path.join(target_dir, item["datei"])
         if os.path.exists(target):
             continue
-        if item["archiv_eintrag"]:
-            with zipfile.ZipFile(item["pfad"]) as z, z.open(item["archiv_eintrag"]) as src, open(target, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-        else:
-            shutil.copy2(item["pfad"], target)
+        try:
+            if item.get("temp_datei") and os.path.isfile(item["temp_datei"]):
+                shutil.copy2(item["temp_datei"], target)          # aus RAR/7z oder verschachteltem Archiv
+            elif item["archiv_eintrag"] and item["pfad"].lower().endswith(".zip"):
+                with zipfile.ZipFile(item["pfad"]) as z, z.open(item["archiv_eintrag"]) as src, \
+                        open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+            elif item["archiv_eintrag"]:
+                archive_tools.extract_member(item["pfad"], item["archiv_eintrag"], target,
+                                             archive_tools.find_tools())
+            else:
+                shutil.copy2(item["pfad"], target)
+        except (OSError, RuntimeError, KeyError, zipfile.BadZipFile) as e:
+            log.error("%s konnte nicht zurückgeholt werden: %s", item["datei"], e)
+            continue
         created.append(target)
     return created

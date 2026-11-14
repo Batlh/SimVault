@@ -35,7 +35,11 @@ which Custom Content you actually use, what is broken, and what can go.
 - 🔦 **CC Finder ("Fundgrube")** — `python main.py find` searches your PC for the missing CC:
   Downloads, old Mods folders (e.g. an English "The Sims 4" folder next to "Die Sims 4"),
   Sims 4 Mod Manager and CurseForge folders, **all other drives** (D:, E:, USB sticks; system folders
-  skipped), or any folder you name — including `.zip` archives. `--ganzer-pc` also scans the whole C: drive.
+  skipped), or any folder you name — including **`.zip`, `.rar` and `.7z` archives** (also nested ones).
+  RAR/7z are briefly unpacked to a temp folder (only packages and nested archives), searched and cleaned up,
+  using 7-Zip, WinRAR (UnRAR) or the `tar` built into Windows 10/11 — choose which in `setup`.
+  Password-protected, broken or very large archives are reported with the reason.
+  `--ganzer-pc` also scans the whole C: drive.
   With `--restore` the found packages are copied to `Mods/SimVault_wiederhergestellt` (nothing is overwritten);
   `--ohne TEXT` leaves out finds whose name or location contains TEXT. The same file found in several places
   is listed once, with all locations.
@@ -49,7 +53,9 @@ which Custom Content you actually use, what is broken, and what can go.
 - 🗜️ **Backup Manager** — Full (ZIP), Delta (only changed files, SHA256) and Selective backups
   of the Mods or saves folder.
 
-- ⚙️ **Config Manager** — centralized configuration through `config.json`, created on first start.
+- ⚙️ **Config Manager & Setup** — `python main.py setup` asks for the Sims folder, game folder,
+  the unpacker for RAR/7z (found ones, own path or none) and whether to search other drives.
+  Everything is stored in `config.json`, created on first start.
   The Sims 4 folder is found automatically (also localized names like "Die Sims 4" and Documents inside OneDrive).
 
 ---
@@ -58,7 +64,6 @@ which Custom Content you actually use, what is broken, and what can go.
 
 - 🔎 **Missing CC Detection for library lots & rooms** (`.blueprint`/`.room` use a different encoding)
 - 🖼️ **Library thumbnails** in the report (`.hhi`/`.sgi` use an unknown image encoding)
-- 📦 **.rar/.7z support** for the CC Finder (currently listed so you can unpack them yourself)
 - 🌐 **CC Search Engine** — real result lists (title, image, download link, description) instead of search links
   - fixed sources as core modules (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims, NewSea)
   - extensible plugin architecture for additional, user-defined sources
@@ -97,6 +102,7 @@ which Custom Content you actually use, what is broken, and what can go.
     python main.py find --restore --ohne WickedWhims   # restore finds, but skip WickedWhims files
     python main.py backup mods          # backup (mode from config.json)
     python main.py backup saves --mode delta
+    python main.py setup                # set up: folders, RAR/7z unpacker, drives
     python main.py config               # show detected paths
     ```
 
