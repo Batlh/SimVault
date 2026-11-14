@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
     "savegames_folder": "",     # leer = <sims_folder>/saves
     "tray_folder": "",          # leer = <sims_folder>/Tray
     "game_folder": "",          # Spiel-Installation, leer = automatisch suchen (optional, für sichere Fehlend-Erkennung)
+    "search_folders": [],       # Ordner für "find" – leer = Downloads, alte Mods-Ordner, Mod-Manager … automatisch
     "backup_folder": "./backups",
     "backup_mode": "full",      # full, delta, selective
     "report_folder": "./reports",

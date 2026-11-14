@@ -61,27 +61,36 @@ class ResourceEntry:
 def read_index(path):
     """Liest nur Header und Index eines Pakets. Gibt eine Liste von ResourceEntry zurück."""
     with open(path, "rb") as f:
-        header = f.read(HEADER_SIZE)
-        if len(header) < HEADER_SIZE or header[:4] != DBPF_MAGIC:
-            raise DBPFError("Kein DBPF-Paket (Magic fehlt oder Datei zu kurz)")
-        major, minor = struct.unpack_from("<II", header, 4)
-        if major != 2:
-            raise DBPFError(f"Nicht unterstützte DBPF-Version {major}.{minor}")
+        return read_index_fileobj(f)
 
-        index_count = struct.unpack_from("<I", header, 36)[0]
-        index_size = struct.unpack_from("<I", header, 44)[0]
-        index_pos = struct.unpack_from("<I", header, 64)[0] or struct.unpack_from("<I", header, 40)[0]
 
-        if index_count == 0:
-            return []
+def read_index_bytes(data):
+    """Wie read_index, aber für ein Paket im Speicher (z. B. aus einem ZIP-Archiv)."""
+    import io
+    return read_index_fileobj(io.BytesIO(data))
 
-        f.seek(0, 2)
-        file_len = f.tell()
-        if index_pos == 0 or index_pos + index_size > file_len:
-            raise DBPFError("Index liegt außerhalb der Datei (Paket beschädigt/abgeschnitten)")
-        f.seek(index_pos)
-        index = f.read(index_size)
 
+def read_index_fileobj(f):
+    header = f.read(HEADER_SIZE)
+    if len(header) < HEADER_SIZE or header[:4] != DBPF_MAGIC:
+        raise DBPFError("Kein DBPF-Paket (Magic fehlt oder Datei zu kurz)")
+    major, minor = struct.unpack_from("<II", header, 4)
+    if major != 2:
+        raise DBPFError(f"Nicht unterstützte DBPF-Version {major}.{minor}")
+
+    index_count = struct.unpack_from("<I", header, 36)[0]
+    index_size = struct.unpack_from("<I", header, 44)[0]
+    index_pos = struct.unpack_from("<I", header, 64)[0] or struct.unpack_from("<I", header, 40)[0]
+
+    if index_count == 0:
+        return []
+
+    f.seek(0, 2)
+    file_len = f.tell()
+    if index_pos == 0 or index_pos + index_size > file_len:
+        raise DBPFError("Index liegt außerhalb der Datei (Paket beschädigt/abgeschnitten)")
+    f.seek(index_pos)
+    index = f.read(index_size)
     return _parse_index(index, index_count, file_len)
 
 

@@ -24,10 +24,13 @@
 # Noch nicht abgedeckt: Grundstücke/Räume in der Bibliothek (.blueprint/.room sind anders verpackt).
 
 import os
+import re
 import json
 import glob
 import logging
 from collections import Counter
+from datetime import datetime, timedelta
+from urllib.parse import quote_plus
 
 import dbpf
 from savegame_analyzer import _read_varint, _tray_item_id
@@ -36,11 +39,32 @@ log = logging.getLogger(__name__)
 
 MIN_CC_ID = 1 << 32
 
-# Pfade innerhalb eines Sims: (Pfad, Modus)
-SIM_CAS_PATHS = [((21, 1, 5, 1), "fixed64_list"),
-                 ((28, 5, 1, 1), "scalar"),
-                 ((28, 6, 1, 1), "scalar")]
 SIM_INVENTORY_PATH = (20, 1, 30)
+
+# Steckplätze (BodyType) der CAS-Teile. Abgeglichen an installierter CC in echten Spielständen
+# (2 Haare, 5 Ganzkörper, 6 Oberteil, 7 Unterteil, 8 Schuhe, 10 Ohrringe, 29–33 Make-up …).
+# Creator nutzen freie Steckplätze oft für anderes (z. B. Flügel auf einem Ring-Steckplatz).
+BODY_TYPES = {
+    1: "Hut/Kopfschmuck", 2: "Haare", 3: "Kopf", 4: "Zähne", 5: "Ganzkörper-Outfit", 6: "Oberteil",
+    7: "Unterteil", 8: "Schuhe", 9: "Accessoire", 10: "Ohrringe", 11: "Brille", 12: "Halskette",
+    13: "Handschuhe", 14: "Armband links", 15: "Armband rechts", 16: "Lippenpiercing links",
+    17: "Lippenpiercing rechts", 18: "Nasenpiercing links", 19: "Nasenpiercing rechts",
+    20: "Augenbrauenpiercing links", 21: "Augenbrauenpiercing rechts", 22: "Ring Zeigefinger links",
+    23: "Ring Zeigefinger rechts", 24: "Ring Ringfinger links", 25: "Ring Ringfinger rechts",
+    26: "Ring Mittelfinger links", 27: "Ring Mittelfinger rechts", 28: "Bart", 29: "Lippenstift",
+    30: "Lidschatten", 31: "Eyeliner/Wimpern", 32: "Rouge", 33: "Gesichtsbemalung", 34: "Augenbrauen",
+    35: "Augenfarbe", 36: "Socken", 37: "Mascara", 42: "Strumpfhose", 58: "Hautüberlagerung",
+}
+for _bt in list(range(38, 42)) + [43, 44, 55, 56, 57]:
+    BODY_TYPES[_bt] = "Hautdetail"
+for _bt in range(45, 55):
+    BODY_TYPES[_bt] = "Tattoo"
+
+
+def body_type_name(bt):
+    if bt is None:
+        return "CAS-Teil"
+    return f"{BODY_TYPES.get(bt, 'CAS-Teil')} (Steckplatz {bt})"
 
 GAME_FOLDER_NAMES = ["The Sims 4", "Die Sims 4"]
 GAME_FOLDER_PARENTS = [
@@ -120,19 +144,28 @@ class MissingCollector:
         self.known = known
         self.items = {}
 
-    def add(self, value, kind, where, source):
+    def add(self, value, kind, where, source, slot=None, group=None):
+        """group: Gruppierung für die Übersicht (z. B. Bibliotheks-Haushalt oder Spielstand)."""
         if value < MIN_CC_ID or value in self.known:
             return
-        item = self.items.setdefault(value, {"id": value, "kind": kind, "where": Counter(), "sources": set()})
+        item = self.items.setdefault(value, {"id": value, "kind": kind, "where": Counter(), "sources": set(),
+                                             "slots": Counter(), "groups": set()})
         item["where"][where] += 1
         item["sources"].add(source)
+        if slot is not None:
+            item["slots"][slot] += 1
+        if group:
+            item["groups"].add(group)
 
     def result(self):
         rows = []
         for item in self.items.values():
+            slot = item["slots"].most_common(1)[0][0] if item["slots"] else None
             rows.append({
                 "id": f"0x{item['id']:016X}",
-                "art": item["kind"],
+                "art": body_type_name(slot) if item["kind"] == "CAS-Teil" else item["kind"],
+                "steckplatz": slot,
+                "gruppen": sorted(item["groups"]),
                 "verwendet_von": [f"{w} ({n}×)" if n > 1 else w for w, n in item["where"].most_common()],
                 "anzahl": sum(item["where"].values()),
                 "quellen": sorted(item["sources"]),
@@ -140,7 +173,50 @@ class MissingCollector:
         return sorted(rows, key=lambda r: (-r["anzahl"], r["id"]))
 
 
-def _scan_sim(buf, rng, collector, source, prefix=""):
+def _packed_varints(buf, rng):
+    values, pos = [], rng[0]
+    while pos < rng[1]:
+        value, pos = _read_varint(buf, pos, rng[1])
+        values.append(value)
+    return values
+
+
+def sim_cas_parts(buf, rng):
+    """Alle CAS-Teile eines Sims als (ID, Steckplatz) – aus den Outfits (Feld 21) und der
+    Grundausstattung (Feld 28: Frisur, Augenbrauen, Augenfarbe, Hautdetails …)."""
+    for field_no, wire, value in iter_fields(buf, *rng):
+        if wire != 2:
+            continue
+        if field_no == 21:
+            for f, w, outfit in iter_fields(buf, *value):
+                if f != 1 or w != 2:
+                    continue
+                parts, types = [], []
+                for pf, pw, pv in iter_fields(buf, *outfit):
+                    if pw != 2:
+                        continue
+                    for lf, lw, lv in iter_fields(buf, *pv):
+                        if lf == 1 and lw == 2:
+                            if pf == 5 and (lv[1] - lv[0]) % 8 == 0:
+                                parts = [int.from_bytes(buf[i:i + 8], "little") for i in range(lv[0], lv[1], 8)]
+                            elif pf == 7:
+                                types = _packed_varints(buf, lv)
+                if len(types) != len(parts):
+                    types = [None] * len(parts)
+                yield from zip(parts, types)
+        elif field_no == 28:
+            for f, w, lst in iter_fields(buf, *value):
+                if f not in (5, 6) or w != 2:
+                    continue
+                for ef, ew, entry in iter_fields(buf, *lst):
+                    if ef != 1 or ew != 2:
+                        continue
+                    vals = {a: x for a, c, x in iter_fields(buf, *entry) if c in (0, 1)}
+                    if 1 in vals:
+                        yield vals[1], vals.get(2)
+
+
+def _scan_sim(buf, rng, collector, source, prefix="", group=None):
     first = last = ""
     for field_no, wire, value in iter_fields(buf, *rng):
         if wire == 2 and field_no == 5:
@@ -148,11 +224,10 @@ def _scan_sim(buf, rng, collector, source, prefix=""):
         elif wire == 2 and field_no == 6:
             last = _string(buf, value)
     name = f"{prefix}{(first + ' ' + last).strip() or 'Sim ohne Namen'}"
-    for path, mode in SIM_CAS_PATHS:
-        for value in values_at(buf, rng, path, mode):
-            collector.add(value, "CAS-Teil", name, source)
+    for value, slot in sim_cas_parts(buf, rng):
+        collector.add(value, "CAS-Teil", name, source, slot=slot, group=group or source)
     for value in values_at(buf, rng, SIM_INVENTORY_PATH):
-        collector.add(value, "Objekt", f"Inventar von {name}", source)
+        collector.add(value, "Objekt", f"Inventar von {name}", source, group=group or source)
 
 
 def scan_save(path, collector):
@@ -208,27 +283,56 @@ def scan_save(path, collector):
             log.debug("Zone %X in %s übersprungen: %s", entry.instance, source, e)
 
 
-def _tray_names(tray_folder):
-    names = {}
+URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
+TRAY_TYPES = {1: "Haushalt", 2: "Grundstück", 3: "Raum"}
+
+
+def read_tray_items(tray_folder):
+    """Liest Name, Ersteller, Beschreibung usw. aller Bibliothekseinträge (.trayitem).
+    Aufbau: 8 Byte Kopf, dann Protobuf – 2 Typ, 4 Name, 5 Beschreibung, 7 Ersteller (Galerie-ID),
+    11 Zeitpunkt (Sekunden seit Jahr 1), 15 ursprünglicher Ersteller bei Remixen."""
+    items = {}
+    if not tray_folder or not os.path.isdir(tray_folder):
+        return items
     for path in glob.glob(os.path.join(tray_folder, "*.trayitem")):
         try:
             with open(path, "rb") as f:
                 data = f.read()
+            if len(data) <= 8:
+                continue
             buf = memoryview(data)
+            info = {"id": _tray_item_id(os.path.basename(path)), "typ": "", "name": "", "beschreibung": "",
+                    "ersteller": "", "original_ersteller": "", "datum": ""}
             for field_no, wire, value in iter_fields(buf, 8, len(data)):
-                if field_no == 4 and wire == 2:
-                    names[_tray_item_id(os.path.basename(path))] = _string(buf, value)
-                    break
+                if wire == 2 and field_no in (4, 5, 7, 15):
+                    key = {4: "name", 5: "beschreibung", 7: "ersteller", 15: "original_ersteller"}[field_no]
+                    info[key] = _string(buf, value).strip()
+                elif wire == 0 and field_no == 2:
+                    info["typ"] = TRAY_TYPES.get(value, str(value))
+                elif wire == 0 and field_no == 11 and value:
+                    try:
+                        # Sekunden ab 1.1.0001, um einen Tag versetzt (an echten Dateizeiten geprüft)
+                        info["datum"] = (datetime(1, 1, 1) + timedelta(seconds=value, days=-1)).strftime("%Y-%m-%d")
+                    except OverflowError:
+                        pass
+            info["links"] = URL_PATTERN.findall(info["beschreibung"])
+            items[info["id"]] = info
         except (OSError, ValueError):
             continue
-    return names
+    return items
 
 
-def scan_tray(tray_folder, collector):
+def _search_link(info):
+    terms = " ".join(t for t in (info.get("ersteller"), info.get("name"), "sims 4 cc") if t)
+    return "https://www.google.com/search?q=" + quote_plus(terms)
+
+
+def scan_tray(tray_folder, collector, tray_items=None):
     """Durchsucht gespeicherte Haushalte der Bibliothek nach fehlender CC."""
     if not tray_folder or not os.path.isdir(tray_folder):
         return
-    names = _tray_names(tray_folder)
+    if tray_items is None:
+        tray_items = read_tray_items(tray_folder)
     for path in glob.glob(os.path.join(tray_folder, "*.householdbinary")):
         try:
             with open(path, "rb") as f:
@@ -239,20 +343,24 @@ def scan_tray(tray_folder, collector):
             continue
         buf = memoryview(data)
         item_id = _tray_item_id(os.path.basename(path))
-        label = f"Bibliothek „{names.get(item_id, item_id)}“: "
+        label = f"Bibliothek „{tray_items.get(item_id, {}).get('name') or item_id}“: "
         try:
             for field_no, wire, value in iter_fields(buf, 8, len(data)):
                 if field_no == 1 and wire == 2:
                     for f, w, sim in iter_fields(buf, *value):
                         if f == 6 and w == 2:
-                            _scan_sim(buf, sim, collector, "Bibliothek", prefix=label)
+                            _scan_sim(buf, sim, collector, "Bibliothek", prefix=label, group="tray:" + item_id)
         except ValueError:
             log.debug("Tray-Datei %s nicht lesbar", path)
 
 
 def find_missing(save_paths, tray_folder, known, progress=None):
-    """Gibt eine Liste fehlender CC zurück (siehe MissingCollector.result)."""
+    """Sucht fehlende CC. Gibt {"teile": [...], "bibliothek": [...]} zurück:
+    teile      – je fehlendem Teil: ID, Art/Steckplatz, wer es nutzt, Quellen
+    bibliothek – je Bibliotheks-Haushalt mit fehlender CC: Name, Ersteller, Beschreibung,
+                 Links aus der Beschreibung, Suchlink und die fehlenden Teile"""
     collector = MissingCollector(known)
+    tray_items = read_tray_items(tray_folder) if tray_folder else {}
     for save in save_paths:
         if progress:
             progress(f"Fehlende CC: {os.path.basename(save)}")
@@ -263,8 +371,21 @@ def find_missing(save_paths, tray_folder, known, progress=None):
     if tray_folder:
         if progress:
             progress("Fehlende CC: Bibliothek")
-        scan_tray(tray_folder, collector)
-    return collector.result()
+        scan_tray(tray_folder, collector, tray_items)
+    parts = collector.result()
+
+    households = {}
+    for part in parts:
+        for group in part["gruppen"]:
+            if not group.startswith("tray:"):
+                continue
+            item_id = group[5:]
+            info = tray_items.get(item_id, {"id": item_id, "name": item_id, "typ": "Haushalt", "beschreibung": "",
+                                            "ersteller": "", "original_ersteller": "", "datum": "", "links": []})
+            entry = households.setdefault(item_id, dict(info, fehlend=[], suche=_search_link(info)))
+            entry["fehlend"].append({"id": part["id"], "art": part["art"]})
+    overview = sorted(households.values(), key=lambda h: (-len(h["fehlend"]), h["name"].lower()))
+    return {"teile": parts, "bibliothek": overview}
 
 
 # ---------------------------------------------------------------------------

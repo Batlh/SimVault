@@ -324,12 +324,14 @@ def packed_fixed64(values):
     return b"".join(struct.pack("<Q", v) for v in values)
 
 
-def sim_proto(first, last, cas_ids, extra_cas=(), inventory=()):
+def sim_proto(first, last, cas_ids, extra_cas=(), inventory=(), body_types=None):
     outfit = f_varint(1, 99) + f_bytes(5, f_bytes(1, packed_fixed64(cas_ids)))
+    if body_types:
+        outfit += f_bytes(7, f_bytes(1, b"".join(varint(t) for t in body_types)))
     sim = f_fixed64(1, 123) + f_bytes(5, first.encode()) + f_bytes(6, last.encode())
     sim += f_bytes(21, f_bytes(1, outfit))
     for c in extra_cas:
-        sim += f_bytes(28, f_bytes(5, f_bytes(1, f_varint(1, c) + f_varint(2, 3))))
+        sim += f_bytes(28, f_bytes(5, f_bytes(1, f_varint(1, c) + f_varint(2, 2))))
     if inventory:
         sim += f_bytes(20, b"".join(f_bytes(1, f_varint(30, o)) for o in inventory))
     return sim
@@ -337,7 +339,7 @@ def sim_proto(first, last, cas_ids, extra_cas=(), inventory=()):
 
 def build_real_layout_save(path):
     sims = f_bytes(6, sim_proto("Bella", "Grusel", [EA_CAS, CAS_ID, MISSING_CAS], extra_cas=[MISSING_CAS],
-                                inventory=[OBJ_ID, MISSING_OBJ]))
+                                inventory=[OBJ_ID, MISSING_OBJ], body_types=[6, 7, 2]))
     household = f_bytes(5, f_bytes(3, b"Grusel") + f_bytes(6, f_bytes(1, f_varint(30, MISSING_OBJ))))
     zone_info = f_bytes(7, f_fixed64(1, ZONE_ID) + f_bytes(2, "Gut Eichhof".encode()))
     savegame = f_bytes(1, f_varint(1, 1)) + household + sims + zone_info
@@ -360,27 +362,40 @@ class MissingCCTests(unittest.TestCase):
         hh = f_bytes(1, f_bytes(6, sim_proto("Ahri", "KDA", [MISSING_TRAY_CAS, EA_CAS])))
         with open(os.path.join(tray, "0x00000000!0x05a40ce453830037.householdbinary"), "wb") as f:
             f.write(struct.pack("<II", 1, len(hh)) + hh)
-        item = f_varint(2, 1) + f_bytes(4, "K/DA Girls".encode())
+        item = (f_varint(2, 1) + f_bytes(4, "K/DA Girls".encode())
+                + f_bytes(5, "Hair by Ivka: https://ivkasims.tumblr.com/post/1 #kda".encode())
+                + f_bytes(7, b"MeoPoMa") + f_varint(11, 63752705085))
         with open(os.path.join(tray, "0x00000001!0x05a40ce453830037.trayitem"), "wb") as f:
             f.write(struct.pack("<II", 0, len(item)) + item)
 
         known = {CAS_ID, OBJ_ID}
-        rows = {r["id"]: r for r in missing_cc.find_missing([save], tray, known)}
+        result = missing_cc.find_missing([save], tray, known)
+        rows = {r["id"]: r for r in result["teile"]}
         self.assertEqual(set(rows), {f"0x{MISSING_CAS:016X}", f"0x{MISSING_OBJ:016X}", f"0x{MISSING_TRAY_CAS:016X}"})
 
         cas = rows[f"0x{MISSING_CAS:016X}"]
-        self.assertEqual((cas["art"], cas["anzahl"], cas["verwendet_von"]), ("CAS-Teil", 2, ["Bella Grusel (2×)"]))
+        self.assertEqual((cas["art"], cas["anzahl"], cas["verwendet_von"]),
+                         ("Haare (Steckplatz 2)", 2, ["Bella Grusel (2×)"]))
+        self.assertEqual(cas["gruppen"], ["Slot_00000001.save"])
         obj = rows[f"0x{MISSING_OBJ:016X}"]
         self.assertEqual(obj["art"], "Objekt")
         self.assertEqual(sorted(obj["verwendet_von"]),
                          ["Grundstück Gut Eichhof", "Haushaltsinventar Grusel", "Inventar von Bella Grusel"])
         tray_row = rows[f"0x{MISSING_TRAY_CAS:016X}"]
         self.assertEqual(tray_row["verwendet_von"], ["Bibliothek „K/DA Girls“: Ahri KDA"])
+        self.assertEqual(tray_row["art"], "CAS-Teil")  # ohne Steckplatz-Liste
+
+        (hh,) = result["bibliothek"]
+        self.assertEqual((hh["name"], hh["ersteller"], hh["typ"], hh["datum"]),
+                         ("K/DA Girls", "MeoPoMa", "Haushalt", "2021-03-29"))
+        self.assertEqual(hh["links"], ["https://ivkasims.tumblr.com/post/1"])
+        self.assertEqual(hh["fehlend"], [{"id": f"0x{MISSING_TRAY_CAS:016X}", "art": "CAS-Teil"}])
+        self.assertIn("MeoPoMa+K%2FDA+Girls", hh["suche"])
         self.assertEqual(tray_row["quellen"], ["Bibliothek"])
 
         # Mit Spiel-IDs: was zum Spiel gehört, ist nicht fehlend
-        rows = missing_cc.find_missing([save], None, known | {MISSING_CAS, MISSING_OBJ})
-        self.assertEqual(rows, [])
+        result = missing_cc.find_missing([save], None, known | {MISSING_CAS, MISSING_OBJ})
+        self.assertEqual(result, {"teile": [], "bibliothek": []})
 
     def test_game_index_and_cache(self):
         game = os.path.join(self.tmp, "The Sims 4")
@@ -397,3 +412,57 @@ class MissingCCTests(unittest.TestCase):
         save = os.path.join(self.tmp, "Slot_00000001.save")
         build_real_layout_save(save)
         self.assertIn(CAS_ID, savegame_analyzer.ids_in_save(save, {CAS_ID}))
+
+
+# --- Fundgrube --------------------------------------------------------------
+
+import zipfile as _zipfile
+import cc_finder
+
+
+class FinderTests(unittest.TestCase):
+    def test_find_and_restore(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            sims = os.path.join(tmp, "Electronic Arts", "Die Sims 4")
+            mods = os.path.join(sims, "Mods")
+            os.makedirs(mods)
+            os.makedirs(os.path.join(sims, "saves"))
+            dbpf.write_package(os.path.join(mods, "Installiert.package"), [(dbpf.TYPE_CASP, 0, CAS_ID, b"x")])
+            build_real_layout_save(os.path.join(sims, "saves", "Slot_00000001.save"))
+
+            fund = os.path.join(tmp, "Downloads")
+            os.makedirs(os.path.join(fund, "alt"))
+            dbpf.write_package(os.path.join(fund, "alt", "Haare_von_Ivka.package"),
+                               [(dbpf.TYPE_CASP, 0, MISSING_CAS, b"hair"), (dbpf.TYPE_CASP, 0, 0x1111111111111111, b"")])
+            dbpf.write_package(os.path.join(fund, "Nichts.package"), [(dbpf.TYPE_CASP, 0, 0x2222222222222222, b"")])
+            inner = os.path.join(tmp, "inner.package")
+            dbpf.write_package(inner, [(dbpf.TYPE_OBJD, 0, MISSING_OBJ, b"sofa")])
+            with _zipfile.ZipFile(os.path.join(fund, "Moebel.zip"), "w") as z:
+                z.write(inner, "Moebel/Sofa.package")
+            open(os.path.join(fund, "Paket.rar"), "wb").close()
+
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"sims_folder": sims, "report_folder": os.path.join(tmp, "reports"),
+                           "database": {"sqlite_path": os.path.join(tmp, "db.sqlite")}}, f)
+            self.assertEqual(main.main(["--config", cfg_path, "find", fund, "--restore"]), 0)
+
+            restored = sorted(os.listdir(os.path.join(mods, cc_finder.RESTORE_SUBFOLDER)))
+            self.assertEqual(restored, ["Haare_von_Ivka.package", "Sofa.package"])
+            self.assertEqual(dbpf.read_index(os.path.join(mods, cc_finder.RESTORE_SUBFOLDER, "Sofa.package"))[0].instance,
+                             MISSING_OBJ)
+
+            report = [r for r in os.listdir(os.path.join(tmp, "reports")) if r.endswith(".json")][0]
+            with open(os.path.join(tmp, "reports", report), encoding="utf-8") as f:
+                data = json.load(f)
+            fs = data["fundstellen"]
+            self.assertEqual((fs["gefunden"], fs["gesucht"]), (2, 3))  # OBJ_ID ist hier nicht installiert
+            self.assertEqual(sorted(d["datei"] for d in fs["dateien"]), ["Haare_von_Ivka.package", "Sofa.package"])
+            self.assertEqual(fs["nicht_lesbar"], [os.path.join(fund, "Paket.rar")])
+
+            # erneutes Zurückholen überschreibt nichts
+            self.assertEqual(cc_finder.restore([{"datei": "Sofa.package", "pfad": "egal", "archiv_eintrag": None}],
+                                               mods), [])
+        finally:
+            shutil.rmtree(tmp)

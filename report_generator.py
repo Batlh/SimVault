@@ -60,9 +60,17 @@ def _row_dict(r):
 
 def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
                     db_path="simvault_data.db", formats=("html", "csv", "json", "md"),
-                    app_name="SimVault", missing=None, missing_info=None):
+                    app_name="SimVault", missing=None, missing_info=None, found=None):
     """Schreibt die Berichte und gibt die Liste der erzeugten Dateien zurück."""
     os.makedirs(output_dir, exist_ok=True)
+    households = []
+    if isinstance(missing, dict):
+        households = missing.get("bibliothek", [])
+        missing = missing.get("teile", [])
+    found_at = {}  # ID -> Dateien, in denen sie gefunden wurde
+    for item in (found or {}).get("dateien", []):
+        for i in item["ids"]:
+            found_at.setdefault(i, []).append(item["datei"])
     now = datetime.now()
     stamp = now.strftime("%Y%m%d_%H%M%S")
     rows = _rows(mod_scan, usage)
@@ -89,7 +97,8 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
     written = []
     base = os.path.join(output_dir, f"report_{stamp}")
     if "html" in formats:
-        written.append(_write_html(base + ".html", app_name, summary, issues, rows, broken_names, missing))
+        written.append(_write_html(base + ".html", app_name, summary, issues, rows, broken_names, missing,
+                                   households, found, found_at))
     if "csv" in formats:
         written.append(_write_csv(base + ".csv", data_rows))
         if missing:
@@ -98,11 +107,11 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
         path = base + ".json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"zusammenfassung": summary, "probleme": issues, "fehlend": missing or [],
-                       "mods": data_rows},
+                       "fehlend_bibliothek": households, "fundstellen": found or {}, "mods": data_rows},
                       f, indent=2, ensure_ascii=False)
         written.append(path)
     if "md" in formats:
-        written.append(_write_md(base + ".md", app_name, summary, issues, data_rows, missing))
+        written.append(_write_md(base + ".md", app_name, summary, issues, data_rows, missing, households, found))
     if db_path:
         _write_sqlite(db_path, now, summary, issues, data_rows, missing)
     return written
@@ -131,7 +140,13 @@ def _write_missing_csv(path, missing):
     return path
 
 
-def _write_md(path, app_name, summary, issues, data_rows, missing=None):
+def _parts_summary(parts):
+    """["Haare (Steckplatz 2)", "Haare (Steckplatz 2)", "Schuhe (Steckplatz 8)"] -> "2× Haare, 1× Schuhe" """
+    counts = Counter(p["art"].split(" (")[0] for p in parts)
+    return ", ".join(f"{n}× {art}" for art, n in counts.most_common())
+
+
+def _write_md(path, app_name, summary, issues, data_rows, missing=None, households=(), found=None):
     lines = [f"# {app_name} – Bericht vom {summary['erstellt'].replace('T', ' ')}", "",
              f"- Mods-Ordner: `{summary['mods_ordner']}`",
              f"- Spielstände: {', '.join(summary['spielstaende']) or '—'}",
@@ -153,6 +168,27 @@ def _write_md(path, app_name, summary, issues, data_rows, missing=None):
         else:
             lines.append("Keine fehlende CC gefunden.")
         lines.append("")
+    if found:
+        lines += ["## Auf deinem PC gefunden", "",
+                  f"{found['gefunden']} von {found['gesucht']} fehlenden Teilen gefunden.", ""]
+        for item in found["dateien"]:
+            where = f"{item['pfad']} → {item['archiv_eintrag']}" if item["archiv_eintrag"] else item["pfad"]
+            lines.append(f"- **{item['anzahl_ids']} Teile** ({', '.join(item['arten'])}): `{where}`")
+        for path in found["nicht_lesbar"]:
+            lines.append(f"- nicht durchsuchbar (entpacken): `{path}`")
+        lines.append("")
+    if households:
+        lines += ["## Bibliothek: Einträge mit fehlender CC", ""]
+        for h in households:
+            by = f" von **{h['ersteller']}**" if h["ersteller"] else ""
+            lines.append(f"### {h['name']}{by} ({h['typ']}, {h['datum'] or 'Datum unbekannt'})")
+            lines.append(f"- Fehlt: {_parts_summary(h['fehlend'])}")
+            if h["beschreibung"]:
+                lines.append(f"- Beschreibung: {h['beschreibung'][:300]}")
+            for link in h["links"]:
+                lines.append(f"- CC-Link aus der Beschreibung: {link}")
+            lines.append(f"- [Im Web suchen]({h['suche']})")
+            lines.append("")
     lines += ["## Mods", "", "| Datei | Kategorie | Status | Spielstände | Tray |", "|---|---|---|---|---|"]
     for d in data_rows:
         name = d["datei"].replace("|", "\\|")
@@ -226,7 +262,21 @@ rows.forEach(r=>tb.appendChild(r))});
 """
 
 
-def _write_html(path, app_name, summary, issues, rows, broken_names, missing=None):
+def _linkify(text):
+    """Text escapen und enthaltene Links klickbar machen."""
+    import re
+    out, last = [], 0
+    for m in re.finditer(r"https?://[^\s<>\"']+", text):
+        out.append(escape(text[last:m.start()]))
+        url = escape(m.group(0))
+        out.append(f"<a href='{url}' target='_blank' rel='noopener'>{url}</a>")
+        last = m.end()
+    out.append(escape(text[last:]))
+    return "".join(out)
+
+
+def _write_html(path, app_name, summary, issues, rows, broken_names, missing=None, households=(),
+                found=None, found_at=None):
     e = escape
     out = [f"<!DOCTYPE html><html lang='de'><head><meta charset='utf-8'><title>{e(app_name)} Bericht</title>",
            f"<style>{_CSS}</style></head><body><div class='wrap'>",
@@ -257,15 +307,50 @@ def _write_html(path, app_name, summary, issues, rows, broken_names, missing=Non
                    "sie unsichtbar oder fehlen. Die ID hilft beim Wiederfinden (z. B. mit Sims 4 Studio).<br>"
                    f"{e(summary.get('fehlend_info') or '')}</div>")
         if missing:
-            out.append("<table><tr><th>ID</th><th>Art</th><th>Anzahl</th><th>Verwendet von</th><th>Quellen</th></tr>")
+            extra = "<th>Gefunden in</th>" if found else ""
+            out.append("<table><tr><th>ID</th><th>Art</th><th>Anzahl</th><th>Verwendet von</th><th>Quellen</th>"
+                       f"{extra}</tr>")
             for m in missing:
                 who = m["verwendet_von"]
                 shown = "<br>".join(e(w) for w in who[:8]) + (f"<br>… {len(who) - 8} weitere" if len(who) > 8 else "")
+                cell = ""
+                if found:
+                    files = (found_at or {}).get(m["id"], [])
+                    cell = f"<td class='s-genutzt'>{e(', '.join(files))}</td>" if files else "<td>—</td>"
                 out.append(f"<tr><td><code>{e(m['id'])}</code></td><td>{e(m['art'])}</td><td>{m['anzahl']}</td>"
-                           f"<td>{shown}</td><td>{e(', '.join(m['quellen']))}</td></tr>")
+                           f"<td>{shown}</td><td>{e(', '.join(m['quellen']))}</td>{cell}</tr>")
             out.append("</table>")
         else:
             out.append("<p>Keine fehlende CC gefunden. 🎉</p>")
+
+    if found:
+        out.append(f"<h2>Auf deinem PC gefunden</h2><div class='meta'>{found['gefunden']} von {found['gesucht']} "
+                   "fehlenden Teilen gefunden. Durchsucht: " + e(", ".join(found["ordner"])) + "</div>")
+        if found["dateien"]:
+            out.append("<table><tr><th>Datei</th><th>Teile</th><th>Art</th><th>Fundort</th></tr>")
+            for item in found["dateien"]:
+                where = e(item["pfad"]) + (f" → {e(item['archiv_eintrag'])}" if item["archiv_eintrag"] else "")
+                out.append(f"<tr><td>{e(item['datei'])}</td><td>{item['anzahl_ids']}</td>"
+                           f"<td>{e(', '.join(item['arten']))}</td><td>{where}</td></tr>")
+            out.append("</table><p>Zurückholen: <code>python main.py find --restore</code> "
+                       "(kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts)</p>")
+        if found["nicht_lesbar"]:
+            out.append("<div class='issue'><b>Nicht durchsuchbar</b> (.rar/.7z/defekt) – bitte entpacken:<ul>"
+                       + "".join(f"<li>{e(p)}</li>" for p in found["nicht_lesbar"]) + "</ul></div>")
+
+    if households:
+        out.append("<h2>Bibliothek: Einträge mit fehlender CC</h2><div class='meta'>Gespeicherte Haushalte, "
+                   "deren CC fehlt. Der Ersteller ist die Galerie-ID – über ihn findest du meist die CC-Liste "
+                   "(Galerie, Tumblr, Patreon, YouTube).</div>")
+        for h in households:
+            by = f" von <b>{e(h['ersteller'])}</b>" if h["ersteller"] else ""
+            orig = (f" (ursprünglich von {e(h['original_ersteller'])})"
+                    if h["original_ersteller"] and h["original_ersteller"] != h["ersteller"] else "")
+            out.append(f"<div class='issue'><b>{e(h['name'])}</b>{by}{orig} · {e(h['typ'])} · {e(h['datum'])}"
+                       f"<br>Fehlt: {e(_parts_summary(h['fehlend']))}")
+            if h["beschreibung"]:
+                out.append(f"<br><span class='meta'>{_linkify(h['beschreibung'][:600])}</span>")
+            out.append(f"<br><a href='{e(h['suche'])}' target='_blank' rel='noopener'>Im Web suchen</a></div>")
 
     if broken_names:
         out.append("<h2>Defekte Dateien neu suchen</h2><table><tr><th>Datei</th><th>Suchen auf</th></tr>")

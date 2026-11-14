@@ -26,8 +26,16 @@ which Custom Content you actually use, what is broken, and what can go.
 
 - 🧩 **Missing CC Detection** — finds CAS parts and objects that are used in savegames or in
   saved library households but are no longer installed, and shows who uses them
-  (Sim names, households, lots, library entries). EA content is recognized by its smaller IDs;
-  if the game folder is found (or set as `game_folder`), all game IDs are excluded as well.
+  (Sim names, households, lots, library entries) and what kind of part it is
+  (hair, top, shoes, lipstick … from the outfit's body-type slot). EA content is recognized by
+  its smaller IDs; if the game folder is found (or set as `game_folder`), all game IDs are excluded as well.
+  For library households it also shows the Gallery creator, description, CC links found in the
+  description and a web search link — the best lead to the original CC list.
+
+- 🔦 **CC Finder ("Fundgrube")** — `python main.py find` searches your PC for the missing CC:
+  Downloads, old Mods folders (e.g. an English "The Sims 4" folder next to "Die Sims 4"),
+  Sims 4 Mod Manager and CurseForge folders, or any folder you name — including `.zip` archives.
+  With `--restore` the found packages are copied to `Mods/SimVault_wiederhergestellt` (nothing is overwritten).
 
 - 📄 **Report Generator** — HTML (sortable, filterable, no internet needed), CSV (Excel-ready),
   JSON and Markdown, plus a local SQLite database with every scan.
@@ -46,6 +54,8 @@ which Custom Content you actually use, what is broken, and what can go.
 ## 🗺️ Roadmap (planned)
 
 - 🔎 **Missing CC Detection for library lots & rooms** (`.blueprint`/`.room` use a different encoding)
+- 🖼️ **Library thumbnails** in the report (`.hhi`/`.sgi` use an unknown image encoding)
+- 📦 **.rar/.7z support** for the CC Finder (currently listed so you can unpack them yourself)
 - 🌐 **CC Search Engine** — real result lists (title, image, download link, description) instead of search links
   - fixed sources as core modules (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims, NewSea)
   - extensible plugin architecture for additional, user-defined sources
@@ -78,12 +88,15 @@ which Custom Content you actually use, what is broken, and what can go.
     python main.py analyze --all-saves  # include all savegames
     python main.py analyze --save "C:\...\saves\Slot_00000002.save"
     python main.py scan                 # Mods folder check only
+    python main.py find                 # search your PC for missing CC (Downloads, old Mods folders …)
+    python main.py find "D:\Old Mods" --restore   # search a folder and copy finds into Mods
     python main.py backup mods          # backup (mode from config.json)
     python main.py backup saves --mode delta
     python main.py config               # show detected paths
     ```
 
-SimVault only **reads** your Sims folders. Nothing is changed or deleted there.
+SimVault only **reads** your Sims folders. The only exception is `find --restore`, which copies
+found packages into the new subfolder `Mods/SimVault_wiederhergestellt` — nothing is overwritten or deleted.
 
 Run the tests: `python -m unittest discover -s tests -v`
 

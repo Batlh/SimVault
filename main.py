@@ -5,6 +5,8 @@
 #   python main.py analyze --all-saves  alle Spielstände einbeziehen
 #   python main.py analyze --save "C:\...\Slot_00000002.save"
 #   python main.py scan                 nur Mods-Ordner prüfen (ohne Spielstand)
+#   python main.py find                 fehlende CC auf dem PC suchen (Downloads, alte Mods-Ordner …)
+#   python main.py find "D:\Alte Mods" --restore   … in bestimmten Ordnern, Funde zurückholen
 #   python main.py backup mods          Backup des Mods-Ordners (Modus aus config.json)
 #   python main.py backup saves --mode delta
 #   python main.py config               zeigt die verwendeten Pfade
@@ -60,12 +62,18 @@ def _print_summary(mod_scan, usage, missing=None):
         for status, n in Counter(r["status"] for r in usage).most_common():
             print(f"  {status:18} {n}")
     if missing is not None:
-        if missing:
-            print(f"\nFehlende CC: {len(missing)} verschiedene Teile/Objekte")
-            for m in missing[:10]:
-                print(f"  {m['id']}  {m['art']:9} {m['anzahl']:>4}×  {', '.join(m['verwendet_von'][:3])}")
-            if len(missing) > 10:
-                print(f"  … {len(missing) - 10} weitere im Bericht")
+        parts = missing["teile"]
+        if parts:
+            print(f"\nFehlende CC: {len(parts)} verschiedene Teile/Objekte")
+            for m in parts[:10]:
+                print(f"  {m['id']}  {m['art'][:28]:28} {m['anzahl']:>4}×  {', '.join(m['verwendet_von'][:2])}")
+            if len(parts) > 10:
+                print(f"  … {len(parts) - 10} weitere im Bericht")
+            if missing["bibliothek"]:
+                print(f"\nBibliotheks-Einträge mit fehlender CC: {len(missing['bibliothek'])}")
+                for h in missing["bibliothek"][:10]:
+                    by = f" von {h['ersteller']}" if h["ersteller"] else ""
+                    print(f"  {len(h['fehlend']):>3} fehlend  {h['name']}{by}")
         else:
             print("\nFehlende CC: keine gefunden")
     if mod_scan.issues:
@@ -74,9 +82,9 @@ def _print_summary(mod_scan, usage, missing=None):
             print(f"  [{issue.severity}] {issue.kind}: {len(issue.files)} Datei(en)")
 
 
-def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_info=None):
+def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_info=None, found=None):
     from report_generator import generate_report
-    files = generate_report(mod_scan, usage, saves, missing=missing, missing_info=missing_info,
+    files = generate_report(mod_scan, usage, saves, missing=missing, missing_info=missing_info, found=found,
                             output_dir=cfg["report_folder"],
                             db_path=cfg["database"].get("sqlite_path"),
                             formats=cfg["report_formats"],
@@ -121,21 +129,81 @@ def cmd_analyze(cfg, args):
 
     missing = missing_info = None
     if not args.no_missing:
-        from missing_cc import find_missing, index_game_content
-        known = set(mod_scan.id_lookup())
-        game = cfg.get("game_folder")
-        if game and os.path.isdir(game):
-            print(f"Lese Spielinhalte aus {game} (beim ersten Mal etwas länger) …")
-            known |= index_game_content(game, cache_path=cfg.get("game_cache", "game_ids_cache.json"),
-                                        progress=_progress)
-            missing_info = f"Abgleich mit Mods-Ordner und Spielordner ({game})"
-        else:
-            missing_info = ("Abgleich mit dem Mods-Ordner; Spielordner nicht gefunden – "
-                            "EA-Inhalte werden an ihren kleineren IDs erkannt")
-        missing = find_missing(saves, tray, known, progress=_progress)
+        missing, missing_info = _find_missing(cfg, mod_scan, saves, tray)
 
     _print_summary(mod_scan, usage, missing)
     _write_report(cfg, mod_scan, usage, saves, missing, missing_info)
+    if missing and missing["teile"]:
+        print('\nTipp: Mit "python main.py find" suchst du die fehlende CC auf deinem PC '
+              "(Downloads, alte Mods-Ordner, ZIP-Archive).")
+    return 0
+
+
+def _find_missing(cfg, mod_scan, saves, tray):
+    from missing_cc import find_missing, index_game_content
+    known = set(mod_scan.id_lookup())
+    game = cfg.get("game_folder")
+    if game and os.path.isdir(game):
+        print(f"Lese Spielinhalte aus {game} (beim ersten Mal etwas länger) …")
+        known |= index_game_content(game, cache_path=cfg.get("game_cache", "game_ids_cache.json"),
+                                    progress=_progress)
+        info = f"Abgleich mit Mods-Ordner und Spielordner ({game})"
+    else:
+        info = ("Abgleich mit dem Mods-Ordner; Spielordner nicht gefunden – "
+                "EA-Inhalte werden an ihren kleineren IDs erkannt")
+    return find_missing(saves, tray, known, progress=_progress), info
+
+
+def cmd_find(cfg, args):
+    from savegame_analyzer import find_saves
+    import cc_finder
+    if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
+        return 1
+    folders = args.folders or cfg.get("search_folders") or cc_finder.default_search_folders(cfg)
+    folders = [f for f in folders if os.path.isdir(f)]
+    if not folders:
+        print("Keine Suchordner gefunden. Ordner angeben: python main.py find \"D:\\Alte Mods\"")
+        return 1
+
+    mod_scan = _scan_mods(cfg)
+    saves = find_saves(cfg["savegames_folder"])          # alle Spielstände
+    print(f"Ermittle fehlende CC aus {len(saves)} Spielständen und der Bibliothek …")
+    missing, info = _find_missing(cfg, mod_scan, saves, cfg.get("tray_folder"))
+    parts = missing["teile"]
+    if not parts:
+        print("Es fehlt keine CC – nichts zu suchen. 🎉")
+        return 0
+
+    print(f"{len(parts)} fehlende Teile. Durchsuche:")
+    for f in folders:
+        print(f"  {f}")
+    wanted = {int(p["id"], 16) for p in parts}
+    hits, unreadable = cc_finder.search(folders, wanted, exclude=[cfg["mods_folder"]], progress=_progress)
+    found, n_found = cc_finder.summarize(hits, parts)
+
+    print(f"\nGefunden: {n_found} von {len(parts)} fehlenden Teilen in {len(found)} Datei(en).")
+    for item in found[:20]:
+        where = f"{item['pfad']} → {item['archiv_eintrag']}" if item["archiv_eintrag"] else item["pfad"]
+        print(f"  {item['anzahl_ids']:>3} Teile  {where}")
+    if len(found) > 20:
+        print(f"  … {len(found) - 20} weitere im Bericht")
+    if unreadable:
+        print(f"\n{len(unreadable)} Archiv(e) konnten nicht durchsucht werden (.rar/.7z/defekt) – "
+              "bitte entpacken und erneut suchen:")
+        for path in unreadable[:10]:
+            print(f"  {path}")
+
+    if found and args.restore:
+        import cc_finder as cf
+        created = cf.restore(found, cfg["mods_folder"])
+        print(f"\n{len(created)} Datei(en) zurückgeholt nach "
+              f"{os.path.join(cfg['mods_folder'], cf.RESTORE_SUBFOLDER)}")
+    elif found:
+        print('\nZum Zurückholen in den Mods-Ordner: python main.py find --restore')
+
+    _write_report(cfg, mod_scan, None, saves, missing, info,
+                  found={"dateien": found, "ordner": folders, "nicht_lesbar": unreadable,
+                         "gefunden": n_found, "gesucht": len(parts)})
     return 0
 
 
@@ -171,6 +239,12 @@ def build_parser():
     b.add_argument("--mode", choices=["full", "delta", "selective"])
     b.add_argument("--files", nargs="+", help="Dateien (relativ zum Ordner) für selective")
     b.set_defaults(func=cmd_backup)
+
+    f = sub.add_parser("find", help="fehlende CC auf dem PC suchen (Ordner und ZIP-Archive)")
+    f.add_argument("folders", nargs="*", help="Suchordner (Standard: Downloads, alte Mods-Ordner, Mod-Manager …)")
+    f.add_argument("--restore", action="store_true",
+                   help="gefundene Pakete nach Mods/SimVault_wiederhergestellt kopieren")
+    f.set_defaults(func=cmd_find)
 
     c = sub.add_parser("config", help="verwendete Pfade anzeigen")
     c.set_defaults(func=cmd_config)
