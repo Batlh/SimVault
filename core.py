@@ -343,6 +343,32 @@ def download(cfg, url, source="", progress=None, should_stop=None, session=None)
     return items.add(path, url, source), items
 
 
+def download_result(cfg, result, progress=None, should_stop=None, session=None):
+    """Lädt einen Treffer der Websuche herunter. Gibt (Einträge, Liste) zurück – oder (None, Adresse), wenn der
+    Download im eingebauten Browser laufen muss (Wartezeit, Anmeldung, Captcha)."""
+    import sources
+    from web_session import NeedsBrowser
+    session = session or web_session(cfg)
+    page = result.extra.get("download_seite") or result.url
+    source = next((s for s in sources.load_sources(cfg)[0] if s.id == result.source_id), None)
+    try:
+        urls = source.download_urls(result, session) if source else ([result.download_url] if result.download_url else [])
+    except Exception:
+        urls = []
+    if not urls:
+        return None, page
+    items, item_list = [], None
+    for url in urls:
+        try:
+            item, item_list = download(cfg, url, result.extra.get("quelle", ""), progress, should_stop, session)
+        except NeedsBrowser:
+            if not items:
+                return None, page
+            break
+        items.append(item)
+    return items, item_list
+
+
 def install_download(cfg, path, progress=None):
     """Installiert einen Download (Pakete, Scripts, Bibliothek, Archive). Gibt das Ergebnis-Dict zurück."""
     import downloads

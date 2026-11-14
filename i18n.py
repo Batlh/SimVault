@@ -217,7 +217,9 @@ EN = {
     "Downloads aus dem Browser sofort installieren": "Install browser downloads right away",
     "Zeit": "Time", "Ergebnis": "Result", "Installieren": "Install", "Download-Ordner öffnen": "Open download folder",
     "Aus der Liste entfernen": "Remove from list", "Adresse oder Suchbegriff …": "Address or search term …",
-    "Anmeldung speichern": "Save login", "{} Treffer.": "{} results.", "Suche „{}“ …": "Searching “{}” …",
+    "Anmeldung speichern": "Save login",
+    "Der Download läuft über die Seite – im Browser starten, SimVault installiert die Datei danach selbst.":
+        "The download runs through the site – start it in the browser, SimVault installs the file afterwards.", "{} Treffer.": "{} results.", "Suche „{}“ …": "Searching “{}” …",
     "heruntergeladen": "downloaded", "installiert": "installed", "übersprungen": "skipped", "Fehler": "Error",
     "wird installiert": "installing", "installiert: {}": "installed: {}", "{}; {} übersprungen": "{}; {} skipped",
     "{} übersprungen": "{} skipped", "{} Fehler": "{} errors", "nichts zu installieren": "nothing to install",

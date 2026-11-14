@@ -287,7 +287,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(data["zusammenfassung"]["status"]["ungenutzt"], 2)  # Ungenutzt, ZuTief (Merge enthält das genutzte Kleid)
             html = open(os.path.join(tmp, "reports", [r for r in reports if r.endswith(".html")][0]), encoding="utf-8").read()
             self.assertIn("[Creator] Cool_Hair.package", html)
-            self.assertIn("thesimsresource.com/search/Kaputt/", html)
+            self.assertIn("thesimsresource.com/downloads/browse/category/sims4/search/Kaputt/", html)
             conn = sqlite3.connect(os.path.join(tmp, "db.sqlite"))
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM mod_files").fetchone()[0], len(data["mods"]))
             conn.close()
@@ -1227,8 +1227,9 @@ class SourceTests(unittest.TestCase):
         ids = {s.id for s in srcs}
         self.assertTrue({"tsr", "curseforge", "patreon", "newsea"} <= ids)
         tsr = next(s for s in srcs if s.id == "tsr")
-        self.assertEqual(tsr.search_url("Cool Hair"), "https://www.thesimsresource.com/search/Cool+Hair/")
-        self.assertFalse(tsr.can_search)
+        self.assertEqual(tsr.search_url("Cool Hair"),
+                         "https://www.thesimsresource.com/downloads/browse/category/sims4/search/Cool%20Hair/")
+        self.assertTrue(tsr.can_search)                      # liefert echte Trefferlisten
 
     def test_json_python_override_and_errors(self):
         self._write("simsdom.json", json.dumps({"id": "SimsDom", "name": "SimsDom",
@@ -1628,7 +1629,8 @@ class WebSearchTests(unittest.TestCase):
                         def search(self, query, session=None):
                             raise OSError("Seite antwortet nicht")
                 '''))
-            cfg = {"plugin_folders": [tmp], "sources_enabled": {}}
+            cfg = {"plugin_folders": [tmp], "sources_enabled": {"tsr": False, "curseforge": False,
+                                                                 "modthesims": False}}
             results, links, errors = core.web_search(cfg, "Kijiko", session=core.web_session(cfg))
             self.assertEqual([(r.title, r.creator, r.extra["bild"]) for r in results],
                              [("Kijiko Wimpern", "Kijiko", b"\xff\xd8bild1"),
@@ -1636,7 +1638,7 @@ class WebSearchTests(unittest.TestCase):
             self.assertEqual(results[0].extra["quelle"], "Testseite")
             self.assertEqual(errors, [("Kaputte Seite", "Seite antwortet nicht")])
             self.assertIn("Testseite", links)
-            self.assertIn("The Sims Resource", links)                       # Link-Quellen weiter dabei
+            self.assertIn("Google", links)                                  # Link-Quellen weiter dabei
         finally:
             server.shutdown()
             server.server_close()
@@ -1937,3 +1939,112 @@ class LotTests(unittest.TestCase):
             with open(path, "rb") as f:
                 objects = missing_cc.lot_objects(f.read())
             self.assertGreater(sum(objects.values()), 100)
+
+
+# --- Trefferlisten der großen Seiten (nachgebautes HTML im Aufbau der echten Seiten) ----------
+
+TSR_PAGE = """<div class="browse-page"><div class="item-wrapper" data-item="{&quot;ID&quot;:&quot;1617735&quot;,
+&quot;title&quot;:&quot;Wimpern 3D&quot;,&quot;description&quot;:&quot;Zwanzig Varianten&quot;,&quot;creator&quot;:&quot;Testerin&quot;,
+&quot;free&quot;:&quot;1&quot;}"><a class="item-link" onclick="return x(this)"
+href="/downloads/details/category/sims4-makeup/title/wimpern-3d/id/1617735/" rel="maingroup">
+<div class="item-image" style="background: url('/scaled/3445/w-293h-220-3445644.jpg')"></div></a>
+<a href="/downloads/details/category/sims4-makeup/title/wimpern-3d/id/1617735/">See More and Download</a></div>
+<div class="item-wrapper" data-item="kaputt"><a class="item-link" href="/downloads/details/category/x/title/zweites-teil/id/2/">
+<div class="item-image" style="background:url(/scaled/1/b.jpg)"></div></a></div>"""
+
+CF_PAGE = """<div class=" project-card"><div class="art"><img id="row-image" alt="logo" src="https://media.forgecdn.net/a/1.jpg">
+</div><a class="overlay-link" href="/sims4/create-a-sim/wimpern-s1"></a><a class="name" title="Go"
+href="/sims4/create-a-sim/wimpern-s1"><span class="ellipsis">Wimpern S1 &amp; mehr</span></a><span class="author">
+<span class="author-name"><a class="author-name is-link" href="/members/ivy"><span class="ellipsis">Ivy</span></a></span>
+</span><a class=" download-cta btn-cta" rel="nofollow" href="/sims4/create-a-sim/wimpern-s1/download/6953394">Download</a>
+<p class="description">Natürliche Wimpern</p></div><div class=" project-card"><p>ohne Link</p></div>"""
+
+MTS_PAGE = """<li data-component="" class="smol-card-component"><div class="thumbnailwrapper">
+<a href='/d/610965/mascara.html'><img class='featuredimage' loading='lazy' src='//thumbs2.modthesims2.com/img/1.attach' />
+</a></div><div class="downloadDetails"><p class="downloadtitle clamped">
+<a href='/d/610965/mascara.html' title="">Mascara -5 styles-</a></p><p class="downloadcreator" > by
+<span class="downloadcreatorname"><strong><a href="/m/2404969">Vampi</a></strong></span></p>
+<p class="downloadPreview"> Hey guys! <a href='/download.php?t=610965'>more...</a></p></li>"""
+
+MTS_DETAIL = """<a class="downloadlink" href="https://chii.modthesims.info/getfile.php?file=1&amp;v=2">Mascara.rar</a>
+<a style="float:right" class="downloadlink btn btn-small" href="https://chii.modthesims.info/getfile.php?file=1&amp;v=2">Download</a>
+<a class="downloadlink" href="https://chii.modthesims.info/getfile.php?file=3&amp;v=4">Extra.package</a>"""
+
+
+class SiteParserTests(unittest.TestCase):
+    def test_tsr(self):
+        from sources.sites import TheSimsResource
+        src = TheSimsResource()
+        results = src.parse(TSR_PAGE)
+        self.assertEqual([(r.title, r.creator) for r in results], [("Wimpern 3D", "Testerin"), ("Zweites Teil", "")])
+        self.assertEqual(results[0].image_url, "https://www.thesimsresource.com/scaled/3445/w-293h-220-3445644.jpg")
+        self.assertEqual(results[0].url, "https://www.thesimsresource.com/downloads/details/category/sims4-makeup/"
+                                         "title/wimpern-3d/id/1617735/")
+        self.assertEqual(results[1].image_url, "https://www.thesimsresource.com/scaled/1/b.jpg")
+        self.assertEqual(src.download_urls(results[0]), [])           # Download über die Seite (Browser)
+        self.assertEqual(src.search_url("kijiko eyelash"),
+                         "https://www.thesimsresource.com/downloads/browse/category/sims4/search/kijiko%20eyelash/")
+
+    def test_curseforge(self):
+        from sources.sites import CurseForge
+        results = CurseForge().parse(CF_PAGE)
+        self.assertEqual(len(results), 1)
+        r = results[0]
+        self.assertEqual((r.title, r.creator, r.description), ("Wimpern S1 & mehr", "Ivy", "Natürliche Wimpern"))
+        self.assertEqual(r.image_url, "https://media.forgecdn.net/a/1.jpg")
+        self.assertEqual(r.extra["download_seite"],
+                         "https://www.curseforge.com/sims4/create-a-sim/wimpern-s1/download/6953394")
+
+    def test_modthesims_with_files(self):
+        from sources.sites import ModTheSims
+
+        class Session:
+            renderer = None
+
+            def __init__(self, pages):
+                self.pages, self.asked = pages, []
+
+            def get(self, url):
+                self.asked.append(url)
+                return self.pages.get(url, "<html>nichts</html>")
+
+        src = ModTheSims()
+        results = src.parse(MTS_PAGE)
+        r = results[0]
+        self.assertEqual((r.title, r.creator, r.description), ("Mascara -5 styles-", "Vampi", "Hey guys!"))
+        self.assertEqual(r.image_url, "https://thumbs2.modthesims2.com/img/1.attach")
+        session = Session({r.url: MTS_DETAIL})
+        self.assertEqual(src.download_urls(r, session), ["https://chii.modthesims.info/getfile.php?file=1&v=2",
+                                                         "https://chii.modthesims.info/getfile.php?file=3&v=4"])
+        # Suche mit Ersteller + Begriff: erst ganzer Begriff, dann Ersteller-Suche, dann einzelne Wörter
+        session = Session({"https://modthesims.info/downloads.php?gs=4&creator=Vampi&tag=mascara": MTS_PAGE})
+        found = src.search("Vampi mascara", session)
+        self.assertEqual([x.title for x in found], ["Mascara -5 styles-"])
+        self.assertEqual(session.asked[:2], ["https://modthesims.info/downloads.php?gs=4&tag=Vampi+mascara",
+                                             "https://modthesims.info/downloads.php?gs=4&creator=Vampi&tag=mascara"])
+
+    def test_blocked_page_uses_browser(self):
+        from sources.sites import fetch
+
+        class Session:
+            def __init__(self, renderer):
+                self.renderer = renderer
+
+            def get(self, url):
+                return "<title>Just a moment...</title><div id='cf-challenge'></div>"
+
+            def render(self, url):
+                return self.renderer(url)
+
+        self.assertEqual(fetch(Session(lambda u: "<p>echt</p>"), "https://x"), "<p>echt</p>")
+        page = fetch(Session(None), "https://x")                       # ohne Fenster: was kam, weitergeben
+        self.assertIn("Just a moment", page)
+
+    def test_download_result_falls_back_to_browser_page(self):
+        import core
+        from sources.base import SearchResult
+        cfg = {"sources_enabled": {}}
+        r = SearchResult(title="x", url="https://www.curseforge.com/sims4/create-a-sim/x", source_id="curseforge",
+                         extra={"download_seite": "https://www.curseforge.com/sims4/create-a-sim/x/download/1"})
+        self.assertEqual(core.download_result(cfg, r, session=object()),
+                         (None, "https://www.curseforge.com/sims4/create-a-sim/x/download/1"))

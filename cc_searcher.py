@@ -55,8 +55,9 @@ import re
 from sources import enabled_sources
 from sources.builtin import builtin_sources
 
-# Für ältere Aufrufer: {Seitenname: URL-Vorlage} der mitgelieferten Quellen
-SEARCH_ENGINES = {s.name: s.template for s in builtin_sources()}
+# Für ältere Aufrufer: {Seitenname: URL-Vorlage} der mitgelieferten Quellen ({query} = Suchbegriff)
+SEARCH_ENGINES = {s.name: s.search_url("{query}").replace("%7Bquery%7D", "{query}").replace("%7bquery%7d", "{query}")
+                  for s in builtin_sources() if s.search_url("{query}")}
 
 
 def query_from_filename(filename):

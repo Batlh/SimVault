@@ -141,11 +141,10 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 
 ## 🗺️ Roadmap (planned)
 
-- 🌐 **CC Search Engine: result lists from the big sites** — the program side is done (result list with images,
-  download, built-in browser for JavaScript pages via `session.render()`); what is missing are the parsers for
-  TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims and NewSea themselves. They can be added
-  as full sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`). Until then those sites are opened in the
-  built-in browser, where downloads are caught and installed automatically.
+- 🌐 **More result lists** — The Sims Resource, CurseForge and ModTheSims deliver real result lists (done);
+  Tumblr, Patreon, LoversLab and SexySims only show results when logged in and stay search links that open in
+  the built-in browser (downloads there are still installed automatically). More sites can be added as full
+  sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
 - 🛡️ **Captcha automation** — captchas are solved by hand in the built-in browser (done); automation optional later
 - 📱 **Mobile App** for remote analysis
 - 🌍 **More languages** — German and English are in; reports and the command line are still German only
@@ -160,8 +159,10 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   script mods to `Mods/SimVault_heruntergeladen/` (they only load one folder deep), library files (Sims, lots,
   rooms) to `Tray/`. ZIP, RAR and 7z (also nested) are unpacked. Already installed CC (all CAS parts are in the
   Mods folder, or the same file is already there) and broken files are skipped; nothing is ever overwritten.
-- **Result lists**: sources that deliver real results (full sources in `plugins/`) show title, preview image and
-  creator; *Download and install* fetches the file — if the site answers with a page instead (login, captcha,
+- **Result lists** from **The Sims Resource, CurseForge and ModTheSims** (and any full source in `plugins/`):
+  title, preview image, creator and description. ModTheSims files are downloaded directly (every file of the
+  download); TSR and CurseForge start their download on the site (waiting time / countdown), so SimVault opens
+  that page in the built-in browser and installs the file as soon as it arrives. *Download and install* fetches the file — if the site answers with a page instead (login, captcha,
   waiting time), it is opened in the built-in browser. Full sources can use `session.render(url)` to get the
   HTML of JavaScript-heavy pages from the built-in browser (headless browser support without Selenium).
 - **Secure login manager**: *Sources → Log in …* opens the site's login page in the built-in browser — 2FA codes

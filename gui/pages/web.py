@@ -227,27 +227,23 @@ class WebPage(QWidget):
         r = self._result()
         if not r:
             return
-        url = r.download_url or r.url
         cfg = self.state.cfg
         session = core.web_session(cfg)
 
         def job(progress, should_stop):
-            from web_session import NeedsBrowser
-            try:
-                return core.download(cfg, url, r.extra.get("quelle", ""), progress, should_stop, session)
-            except NeedsBrowser as e:
-                return e
+            return core.download_result(cfg, r, progress, should_stop, session)
 
         def done(result):
-            from web_session import NeedsBrowser
-            if isinstance(result, NeedsBrowser):
-                self.state.message.emit(str(result))
-                self.open_url(r.url)
+            items, rest = result
+            if items is None:                       # Wartezeit/Anmeldung: im eingebauten Browser herunterladen
+                self.state.message.emit("Der Download läuft über die Seite – im Browser starten, SimVault installiert "
+                                        "die Datei danach selbst.")
+                self.open_url(rest)
                 return
-            item, items = result
-            self.items = items
+            self.items = rest
             self._fill_downloads()
-            self.pending.append(item)
+            self.pending.extend(items)
+            self.tabs.setCurrentIndex(2)
 
         self.state.runner.start(job, on_done=done, on_error=lambda m: QMessageBox.warning(self, "Download", m))
 

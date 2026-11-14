@@ -1,18 +1,17 @@
 # Modul: sources/builtin.py
-# Funktion: Mitgelieferte Quellen. Vorerst Link-Quellen (Such-URL); echte Trefferlisten mit
-#           Login kommen als Voll-Quellen dazu (siehe Roadmap im README).
+# Funktion: Mitgelieferte Quellen. TSR, CurseForge und ModTheSims liefern echte Trefferlisten
+#           (sites.py); die übrigen Seiten brauchen eine Anmeldung oder JavaScript-Suche und bleiben
+#           Such-Links, die sich im eingebauten Browser öffnen.
 
 from .base import LinkSource
+from .sites import CurseForge, ModTheSims, TheSimsResource
 
 
 def builtin_sources():
     return [
-        LinkSource("tsr", "The Sims Resource", "https://www.thesimsresource.com/search/{query}/",
-                   homepage="https://www.thesimsresource.com", login_url="https://www.thesimsresource.com/account/login"),
-        LinkSource("curseforge", "CurseForge", "https://www.curseforge.com/sims4/search?search={query}",
-                   homepage="https://www.curseforge.com/sims4"),
-        LinkSource("modthesims", "ModTheSims", "https://modthesims.info/browse.php?tag={query}",
-                   homepage="https://modthesims.info"),
+        TheSimsResource(),
+        CurseForge(),
+        ModTheSims(),
         LinkSource("tumblr", "Tumblr", "https://www.tumblr.com/search/{query}", homepage="https://www.tumblr.com"),
         LinkSource("patreon", "Patreon", "https://www.patreon.com/search?q={query}",
                    homepage="https://www.patreon.com", login_url="https://www.patreon.com/login"),

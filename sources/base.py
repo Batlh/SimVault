@@ -53,6 +53,11 @@ class Source:
         """Echte Treffer als Liste von SearchResult. Link-Quellen liefern nichts."""
         return []
 
+    def download_urls(self, result, session=None):
+        """Direkte Datei-Links eines Treffers (z. B. von der Detailseite gelesen). Leer = die Seite im
+        eingebauten Browser öffnen, dort lädt man selbst herunter (Wartezeit, Anmeldung, Captcha)."""
+        return [result.download_url] if result.download_url else []
+
     @property
     def can_search(self):
         """True, wenn die Quelle echte Treffer liefern kann (search() überschrieben)."""
