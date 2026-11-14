@@ -66,16 +66,6 @@ def body_type_name(bt):
         return "CAS-Teil"
     return f"{BODY_TYPES.get(bt, 'CAS-Teil')} (Steckplatz {bt})"
 
-GAME_FOLDER_NAMES = ["The Sims 4", "Die Sims 4"]
-GAME_FOLDER_PARENTS = [
-    r"C:\Program Files\EA Games",
-    r"C:\Program Files (x86)\EA Games",
-    r"C:\Program Files (x86)\Origin Games",
-    r"C:\Program Files\Origin Games",
-    r"C:\Program Files (x86)\Steam\steamapps\common",
-    r"C:\Program Files\Steam\steamapps\common",
-]
-
 
 # ---------------------------------------------------------------------------
 # Kleiner Protobuf-Leser
@@ -393,12 +383,9 @@ def find_missing(save_paths, tray_folder, known, progress=None):
 # ---------------------------------------------------------------------------
 
 def find_game_folder():
-    for parent in GAME_FOLDER_PARENTS:
-        for name in GAME_FOLDER_NAMES:
-            path = os.path.join(parent, name)
-            if os.path.isdir(os.path.join(path, "Data", "Client")):
-                return path
-    return ""
+    """Sims-4-Installation automatisch finden (Registry, Steam, Epic, übliche Ordner) – siehe game_locator."""
+    import game_locator
+    return game_locator.find_game_folder()
 
 
 def index_game_content(game_folder, cache_path=None, progress=None):

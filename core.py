@@ -66,20 +66,71 @@ def analyze(cfg, all_saves=True, tray=True, missing=True, progress=None):
     if not all_saves:
         saves = saves[:1]
     tray_folder = cfg.get("tray_folder") if tray else None
-    usage = analyze_usage(mod_scan, saves, tray_folder=tray_folder, progress=say)
-    result = {"mod_scan": mod_scan, "usage": usage, "saves": saves, "missing": None, "missing_info": None}
+    id_usage = {}
+    usage = analyze_usage(mod_scan, saves, tray_folder=tray_folder, progress=say, id_usage=id_usage)
+    result = {"mod_scan": mod_scan, "usage": usage, "saves": saves, "missing": None, "missing_info": None,
+              "id_usage": id_usage}
     if missing:
         result["missing"], result["missing_info"] = find_missing(cfg, mod_scan, saves, tray_folder, say)
+    result["conflicts"] = check_conflicts(cfg, mod_scan, id_usage, say)
     return result
 
 
+_game_ids = {}
+
+
+def game_ids(cfg, progress=None):
+    """IDs der Original-Inhalte des Spiels (leer, wenn kein Spielordner bekannt ist)."""
+    from missing_cc import index_game_content
+    game = cfg.get("game_folder")
+    if not game or not os.path.isdir(game):
+        return set()
+    if game not in _game_ids:
+        cache = os.path.join(os.path.dirname(cfg.get("_config_path") or "."), "game_ids_cache.json")
+        _game_ids[game] = index_game_content(game, cache_path=cache, progress=progress)
+    return _game_ids[game]
+
+
+def check_conflicts(cfg, mod_scan, id_usage=None, progress=None):
+    """Ordnet Überschneidungen im Mods-Ordner ein und wägt sie mit der Nutzung in den Spielständen ab."""
+    import conflicts
+    return conflicts.analyze_conflicts(mod_scan, id_usage, game_ids(cfg), progress)
+
+
+def clean_conflicts(cfg, conflict_result):
+    """Räumt auf, was sicher geht: überflüssige Dateien wandern nach <Sims-Ordner>/SimVault_aussortiert,
+    veraltete Doppel werden aus Paketen entfernt (Original vorher in den Backup-Ordner).
+    Gibt das Ergebnis-Dict von conflicts.resolve zurück."""
+    import conflicts
+    base = cfg.get("sims_folder") or os.path.dirname(os.path.normpath(cfg["mods_folder"]))
+    return conflicts.resolve(cfg["mods_folder"], conflict_result, base, cfg["backup_folder"])
+
+
+def check_health(cfg, deep=False, progress=None, should_stop=None):
+    """Prüft alle CC-Dateien und Spielstände auf Schäden."""
+    import repair
+    return repair.check_all(cfg.get("mods_folder"), cfg.get("savegames_folder"), deep, progress, should_stop)
+
+
+def repair_items(cfg, items, progress=None):
+    """Repariert die reparierbaren Einträge aus check_health. Gibt (Backup-Ordner, Ergebnisse) zurück."""
+    import repair
+    import archive_tools
+    return repair.repair_all(items, cfg["backup_folder"], cfg.get("mods_folder"),
+                             archive_tools.tools_from_config(cfg), progress)
+
+
+def find_game_folders(deep=True, should_stop=None):
+    import game_locator
+    return game_locator.find_game_folders(deep=deep, should_stop=should_stop)
+
+
 def find_missing(cfg, mod_scan, saves, tray_folder, progress=None):
-    from missing_cc import find_missing as _find, index_game_content
+    from missing_cc import find_missing as _find
     known = set(mod_scan.id_lookup())
     game = cfg.get("game_folder")
     if game and os.path.isdir(game):
-        cache = os.path.join(os.path.dirname(cfg.get("_config_path") or "."), "game_ids_cache.json")
-        known |= index_game_content(game, cache_path=cache, progress=progress)
+        known |= game_ids(cfg, progress)
         info = f"Abgleich mit Mods-Ordner und Spielordner ({game})"
     else:
         info = ("Abgleich mit dem Mods-Ordner; Spielordner nicht gefunden – "
@@ -93,7 +144,8 @@ def write_report(cfg, analysis=None, mod_scan=None, found=None):
     return generate_report(mod_scan or analysis.get("mod_scan"), analysis.get("usage"), analysis.get("saves"),
                            output_dir=cfg["report_folder"], db_path=cfg["database"].get("sqlite_path"),
                            formats=cfg["report_formats"], app_name=cfg["branding"].get("app_name", "SimVault"),
-                           missing=analysis.get("missing"), missing_info=analysis.get("missing_info"), found=found)
+                           missing=analysis.get("missing"), missing_info=analysis.get("missing_info"), found=found,
+                           conflicts=analysis.get("conflicts"))
 
 
 def search_locations(cfg, extra_folders=None, drives=None, whole_pc=False):
@@ -128,8 +180,9 @@ def find(cfg, missing_parts, folders, progress=None, should_stop=None, keep_hits
             "gefunden": n_found, "gesucht": len(missing_parts)}
 
 
-def restore(cfg, found_files, exclude=(), backup_first=True, progress=None):
-    """Holt Funde zurück (vorher optional Backup). Gibt (backup_pfad, angelegt, fehlgeschlagen) zurück."""
+def restore(cfg, found_files, exclude=(), backup_first=True, progress=None, skipped=None):
+    """Holt Funde zurück (vorher optional Backup). Gibt (backup_pfad, angelegt, fehlgeschlagen) zurück.
+    skipped: optionale Liste – wird mit [(Datei, Grund)] der bewusst nicht kopierten Funde gefüllt."""
     import cc_finder
     import archive_tools
     backup_path = None
@@ -140,7 +193,7 @@ def restore(cfg, found_files, exclude=(), backup_first=True, progress=None):
     tools = archive_tools.tools_from_config(cfg)
     with tempfile.TemporaryDirectory(prefix=cc_finder.TEMP_PREFIX, dir=cfg.get("temp_folder") or None) as work:
         created, failed = cc_finder.restore(found_files, cfg["mods_folder"], exclude=exclude, tools=tools,
-                                            work_dir=work, progress=progress)
+                                            work_dir=work, progress=progress, skipped=skipped)
     return backup_path, created, failed
 
 

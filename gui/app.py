@@ -29,6 +29,6 @@ def main(argv=None):
     if icon:
         from PySide6.QtGui import QIcon
         app.setWindowIcon(QIcon(icon))
-    window = MainWindow(config_path)
+    window = MainWindow(config_path, first_run=True)
     window.show()
     return app.exec()

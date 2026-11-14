@@ -214,11 +214,13 @@ def ids_in_tray(tray_folder, known):
     return usage
 
 
-def analyze_usage(mod_scan, save_paths, tray_folder=None, progress=None):
+def analyze_usage(mod_scan, save_paths, tray_folder=None, progress=None, id_usage=None):
     """Gleicht installierte Mods mit Spielständen (und optional dem Tray) ab.
 
     Gibt eine Liste von Dicts zurück, je Mod-Datei:
       {"mod": ModFile, "status": ..., "saves": [Spielstand-Namen], "tray": Anzahl}
+    id_usage: optionales Dict – wird mit {"saves": {ID: [Spielstände]}, "tray": {ID: Anzahl}} gefüllt
+              (für die Konfliktprüfung: welche einzelnen Teile werden wirklich benutzt).
     """
     lookup = mod_scan.id_lookup()
     known = set(lookup)
@@ -240,6 +242,10 @@ def analyze_usage(mod_scan, save_paths, tray_folder=None, progress=None):
         if progress:
             progress("Bibliothek (Tray)")
         tray_usage = ids_in_tray(tray_folder, known)
+
+    if id_usage is not None:
+        id_usage["saves"] = used_in_save
+        id_usage["tray"] = tray_usage
 
     rows = []
     for mod in mod_scan.mods:

@@ -59,7 +59,9 @@ class OverviewPage(QWidget):
         to_missing.clicked.connect(lambda: self.navigate.emit("Fehlende CC"))
         to_search = QPushButton("CC auf dem PC suchen")
         to_search.clicked.connect(lambda: self.navigate.emit("CC-Suche"))
-        for b in (self.run, self.report, to_missing, to_search):
+        to_conflicts = QPushButton("Konflikte ansehen")
+        to_conflicts.clicked.connect(lambda: self.navigate.emit("Konflikte"))
+        for b in (self.run, self.report, to_missing, to_search, to_conflicts):
             buttons.addWidget(b)
         buttons.addStretch(1)
         lay.addLayout(buttons)
@@ -120,10 +122,17 @@ class OverviewPage(QWidget):
             self.cards["genutzt"].set(usage.get("genutzt", 0))
             self.cards["ungenutzt"].set(usage.get("ungenutzt", 0))
             self.cards["fehlend"].set(len(a["missing"]["teile"]) if a.get("missing") else "–")
-            self.cards["probleme"].set(len(a["mod_scan"].issues))
+            conflicts = (a.get("conflicts") or {}).get("konflikte", [])
+            issues = [i for i in a["mod_scan"].issues if i.kind != "Konflikt"]
+            self.cards["probleme"].set(len(issues) + len(conflicts))
             saves = ", ".join(os.path.basename(s) for s in a["saves"]) or "keine"
             self.info.setText(f"Spielstände: {saves}\n{a.get('missing_info') or ''}")
-            lines = [f"• {i.severity} – {i.kind}: {len(i.files)} Datei(en)" for i in a["mod_scan"].issues[:8]]
+            lines = [f"• {i.severity} – {i.kind}: {len(i.files)} Datei(en)" for i in issues[:8]]
+            if conflicts:
+                kinds = Counter(c["art"] for c in conflicts)
+                removable = len(a["conflicts"]["entfernbar"])
+                lines.append("• Überschneidungen geprüft: " + ", ".join(f"{n}× {k}" for k, n in kinds.items())
+                             + (f" – {removable} Datei(en) überflüssig" if removable else ""))
             self.issues.setText("\n".join(lines))
         else:
             for key in ("mods", "genutzt", "ungenutzt", "fehlend", "probleme"):

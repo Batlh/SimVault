@@ -1,6 +1,6 @@
 # Modul: gui/main_window.py – Hauptfenster: Seitenleiste links, Seiten rechts, Statusleiste unten
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
                                QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -9,15 +9,17 @@ from .pages.overview import OverviewPage
 from .pages.mods import ModsPage
 from .pages.missing import MissingPage
 from .pages.finder import FinderPage
+from .pages.conflicts import ConflictsPage
+from .pages.repair import RepairPage
 from .pages.backup import BackupPage
 from .pages.sources import SourcesPage
-from .pages.settings import SettingsPage
+from .pages.settings import SettingsPage, choose_game_folder
 
-VERSION = "0.5"
+VERSION = "0.6"
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, config_path=None):
+    def __init__(self, config_path=None, first_run=False):
         super().__init__()
         self.setWindowTitle("SimVault – Sims 4 CC-Verwaltung")
         self.resize(1280, 820)
@@ -55,6 +57,8 @@ class MainWindow(QMainWindow):
             ("Mods", ModsPage(self.state)),
             ("Fehlende CC", MissingPage(self.state)),
             ("CC-Suche", FinderPage(self.state)),
+            ("Konflikte", ConflictsPage(self.state)),
+            ("Reparatur", RepairPage(self.state)),
             ("Backup", BackupPage(self.state)),
             ("Quellen", SourcesPage(self.state)),
             ("Einstellungen", SettingsPage(self.state)),
@@ -90,6 +94,27 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Willkommen bei SimVault",
                                     "Der Sims-4-Ordner wurde nicht automatisch gefunden.\n"
                                     "Bitte unter „Einstellungen“ festlegen.")
+        elif first_run and not self.state.raw.get("game_folder") and not self.state.raw.get("game_folder_asked"):
+            QTimer.singleShot(600, self._suggest_game_folder)
+
+    def _suggest_game_folder(self):
+        """Beim ersten Start: Sims-4-Installation suchen und zur Auswahl vorschlagen."""
+        import core
+        self.status_label.setText("Suche die Sims-4-Installation …")
+        self.state.runner.start(lambda progress, should_stop: core.find_game_folders(True, should_stop),
+                                on_done=self._game_folder_found)
+
+    def _game_folder_found(self, found):
+        raw = dict(self.state.raw)
+        raw["game_folder_asked"] = True
+        if found:
+            choice = choose_game_folder(self, found)
+            if choice:
+                raw["game_folder"] = choice
+                self.status_label.setText(f"Spielordner: {choice}")
+        else:
+            self.status_label.setText("Sims-4-Installation nicht gefunden – unter „Einstellungen“ festlegen.")
+        self.state.save_config(raw)
 
     def go_to(self, name):
         for i, (page_name, _page) in enumerate(self.pages):
@@ -102,7 +127,7 @@ class MainWindow(QMainWindow):
         for _name, page in self.pages:
             if hasattr(page, "set_busy"):
                 page.set_busy(busy)
-        if not busy and self.status_label.text().startswith(("Mods:", "Spielstand", "Fehlende CC", "durchsuche")):
+        if not busy and self.status_label.text().startswith(("Mods:", "Spielstand", "Fehlende CC", "durchsuche", "Konflikte", "Prüfe", "Repariere")):
             self.status_label.setText("Fertig.")
 
     def closeEvent(self, event):

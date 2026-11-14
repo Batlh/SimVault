@@ -60,7 +60,7 @@ def _row_dict(r):
 
 def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
                     db_path="simvault_data.db", formats=("html", "csv", "json", "md"),
-                    app_name="SimVault", missing=None, missing_info=None, found=None):
+                    app_name="SimVault", missing=None, missing_info=None, found=None, conflicts=None):
     """Schreibt die Berichte und gibt die Liste der erzeugten Dateien zurück."""
     os.makedirs(output_dir, exist_ok=True)
     households = []
@@ -92,7 +92,15 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
         "fehlend_info": missing_info,
     }
     issues = [{"schwere": i.severity, "art": i.kind, "meldung": i.message, "dateien": i.files}
-              for i in mod_scan.issues]
+              for i in mod_scan.issues if not (conflicts and i.kind == "Konflikt")]
+    # Geprüfte Konflikte ersetzen die pauschale Meldung des Scanners: mit Art, Nutzung und Empfehlung
+    for c in (conflicts or {}).get("konflikte", []):
+        serious = c["art"] in ("Konflikt", "Überschreibung") and c["genutzt"]
+        issues.append({"schwere": "Fehler" if serious else "Hinweis", "art": c["art"],
+                       "meldung": f"{c['teile']} gemeinsame{'s Teil' if c['teile'] == 1 else ' Teile'} "
+                                  f"({c['identisch']} identisch, "
+                                  f"{c['unterschiedlich']} unterschiedlich). {c['empfehlung']}",
+                       "dateien": c["dateien"]})
 
     written = []
     base = os.path.join(output_dir, f"report_{stamp}")
@@ -107,7 +115,10 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
         path = base + ".json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"zusammenfassung": summary, "probleme": issues, "fehlend": missing or [],
-                       "fehlend_bibliothek": households, "fundstellen": found or {}, "mods": data_rows},
+                       "fehlend_bibliothek": households, "fundstellen": found or {},
+                       "konflikte": (conflicts or {}).get("konflikte", []),
+                       "entfernbar": (conflicts or {}).get("entfernbar", []),
+                       "aufloesbar": (conflicts or {}).get("aufloesbar", []), "mods": data_rows},
                       f, indent=2, ensure_ascii=False)
         written.append(path)
     if "md" in formats:

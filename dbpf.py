@@ -58,10 +58,11 @@ class ResourceEntry:
         return f"{self.type:08X}:{self.group:08X}:{self.instance:016X}"
 
 
-def read_index(path):
-    """Liest nur Header und Index eines Pakets. Gibt eine Liste von ResourceEntry zurück."""
+def read_index(path, strict=True):
+    """Liest nur Header und Index eines Pakets. Gibt eine Liste von ResourceEntry zurück.
+    strict=False: Einträge, die hinter das Dateiende zeigen, werden trotzdem geliefert (für Reparaturen)."""
     with open(path, "rb") as f:
-        return read_index_fileobj(f)
+        return read_index_fileobj(f, strict)
 
 
 def read_index_bytes(data):
@@ -70,7 +71,7 @@ def read_index_bytes(data):
     return read_index_fileobj(io.BytesIO(data))
 
 
-def read_index_fileobj(f):
+def read_index_fileobj(f, strict=True):
     header = f.read(HEADER_SIZE)
     if len(header) < HEADER_SIZE or header[:4] != DBPF_MAGIC:
         raise DBPFError("Kein DBPF-Paket (Magic fehlt oder Datei zu kurz)")
@@ -91,10 +92,10 @@ def read_index_fileobj(f):
         raise DBPFError("Index liegt außerhalb der Datei (Paket beschädigt/abgeschnitten)")
     f.seek(index_pos)
     index = f.read(index_size)
-    return _parse_index(index, index_count, file_len)
+    return _parse_index(index, index_count, file_len, strict)
 
 
-def _parse_index(index, count, file_len):
+def _parse_index(index, count, file_len, strict=True):
     try:
         pos = 0
         flags = struct.unpack_from("<I", index, pos)[0]
@@ -130,7 +131,7 @@ def _parse_index(index, count, file_len):
                 pos += 4  # Kompression (u16) + "committed" (u16)
             file_size = size_raw & 0x7FFFFFFF
 
-            if compression != COMPRESSION_DELETED and offset + file_size > file_len:
+            if strict and compression != COMPRESSION_DELETED and offset + file_size > file_len:
                 raise DBPFError("Ressource zeigt hinter das Dateiende (Paket beschädigt)")
 
             entries.append(ResourceEntry(rtype, group, (inst_hi << 32) | inst_lo,
@@ -249,3 +250,34 @@ def write_package(path, resources):
 
     with open(path, "wb") as f:
         f.write(body)
+
+
+def rebuild_package(source, target, entries):
+    """Schreibt ein neues Paket nur mit den angegebenen Ressourcen aus source.
+    Die Daten werden unverändert (weiter komprimiert) übernommen – für Reparaturen."""
+    index = bytearray(struct.pack("<I", 0))
+    with open(source, "rb") as src, open(target, "wb") as dst:
+        dst.write(b"\0" * HEADER_SIZE)
+        offset = HEADER_SIZE
+        count = 0
+        for e in entries:
+            if e.compression == COMPRESSION_DELETED:
+                continue
+            src.seek(e.offset)
+            raw = src.read(e.file_size)
+            dst.write(raw)
+            index += struct.pack("<IIIIIIIHH", e.type, e.group, e.instance >> 32, e.instance & 0xFFFFFFFF,
+                                 offset, len(raw) | 0x80000000, e.mem_size, e.compression, 1)
+            offset += len(raw)
+            count += 1
+        dst.write(index)
+        header = bytearray(HEADER_SIZE)
+        header[0:4] = DBPF_MAGIC
+        struct.pack_into("<II", header, 4, 2, 1)
+        struct.pack_into("<I", header, 36, count)
+        struct.pack_into("<I", header, 44, len(index))
+        struct.pack_into("<I", header, 60, 3)
+        struct.pack_into("<I", header, 64, offset)
+        dst.seek(0)
+        dst.write(header)
+    return count

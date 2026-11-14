@@ -6,7 +6,16 @@ zusammen mit der Liste aller Commits seit dem letzten Release.
 
 ## [Unveröffentlicht]
 
+### Neu
+- Konfliktprüfung: Überschneidungen im Mods-Ordner werden inhaltlich verglichen und eingeordnet (Doppelt, Überschneidung, Konflikt, Überschreibung), mit Spielständen und Bibliothek gegengeprüft und mit einer Empfehlung versehen. Neue Seite „Konflikte“ und Befehl `conflicts`.
+- Bei echten Konflikten schaut SimVault in die CAS-Teile: neueres CAS-Format = aktualisierte Fassung, unterschiedliche Namen unter einer ID = zwei CC, die sich verdecken, sonst Variante oder anders gespeicherte Kopie.
+- „Aufräumen“ löst auf, was sicher geht: überflüssige Dateien (stecken komplett und identisch in anderen) wandern nach `SimVault_aussortiert` (nicht gelöscht), veraltete Doppel werden aus dem betroffenen Paket entfernt (Original im Backup-Ordner).
+- Spielordner wird automatisch gefunden (EA App/Origin, Steam, Epic, alle Laufwerke) und zur Auswahl vorgeschlagen: beim ersten Start, in den Einstellungen („Automatisch suchen“) und in `setup`.
+- Reparatur: prüft CC und Spielstände; repariert falsch benannte Archive, Pakete mit einzelnen kaputten Ressourcen und Spielstände (letzte intakte Fassung des Spiels). Originale werden vorher gesichert. Neue Seite „Reparatur“ und Befehl `repair`.
+
 ### Bugfixes
+- Kommandozeile stürzte unter Windows ab, wenn die Ausgabe umgeleitet wurde (Zeichen „→“).
+- Test für Suchorte schlug auf Rechnern mit weiteren Laufwerken fehl.
 - Wiederherstellen legt keine doppelte CC mehr an: Funde, deren Teile schon im Mods-Ordner sind oder von einer anderen Fund-Datei mitgebracht werden, werden übersprungen; bei Gleichstand gewinnt das kleinere Einzelpaket statt eines großen Sets.
 - „Könnte Sims-Inhalte enthalten“ ist nicht mehr so großzügig – z. B. Mass-Effect-Mods in einem Ordner „Mods“ landen nicht mehr in der Sims-Liste.
 - Nach einer Suche (`find`) steht im Bericht wieder bei jeder Mod, ob sie genutzt wird.

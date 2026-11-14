@@ -2,10 +2,12 @@
 
 import os
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
-                               QPushButton, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
+                               QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
+import core
 import archive_tools
+import game_locator
 from ..widgets import PathEdit, open_path, page_header
 
 
@@ -25,7 +27,13 @@ class SettingsPage(QWidget):
         self.reports = PathEdit()
         self.temp = PathEdit(placeholder="leer = System-Temp (z. B. auf D: legen, wenn C: knapp ist)")
         f.addRow("Sims-4-Ordner:", self.sims)
-        f.addRow("Spielordner:", self.game)
+        game_row = QHBoxLayout()
+        self.find_game = QPushButton("Automatisch suchen")
+        self.find_game.setToolTip("Sucht die Sims-4-Installation: EA App/Origin, Steam, Epic und alle Laufwerke.")
+        self.find_game.clicked.connect(self.search_game)
+        game_row.addWidget(self.game, 1)
+        game_row.addWidget(self.find_game)
+        f.addRow("Spielordner:", game_row)
         f.addRow("Backups:", self.backup)
         f.addRow("Berichte:", self.reports)
         f.addRow("Temp-Ordner:", self.temp)
@@ -97,6 +105,20 @@ class SettingsPage(QWidget):
         self.extractor.blockSignals(False)
         self._extractor_changed()
 
+    def set_busy(self, busy):
+        self.find_game.setEnabled(not busy)
+
+    def search_game(self):
+        self.state.runner.start(lambda progress, should_stop: core.find_game_folders(True, should_stop),
+                                on_done=self._game_found,
+                                on_error=lambda m: QMessageBox.warning(self, "Spielordner", m))
+
+    def _game_found(self, found):
+        choice = choose_game_folder(self, found)
+        if choice:
+            self.game.setText(choice)
+            self.state.message.emit("Spielordner übernommen – „Speichern“ nicht vergessen.")
+
     def _extractor_changed(self):
         data = self.extractor.currentData()
         self.extractor_path.setVisible(data == "custom")
@@ -113,7 +135,14 @@ class SettingsPage(QWidget):
             QMessageBox.warning(self, "Einstellungen", f"Den Sims-4-Ordner gibt es nicht:\n{sims}")
             return
         raw["sims_folder"] = sims
-        raw["game_folder"] = self.game.text()
+        game = self.game.text()
+        if game and not game_locator.is_game_folder(game):
+            if QMessageBox.question(self, "Einstellungen",
+                                    f"In diesem Ordner liegt kein „Data\\Client“ – das ist vermutlich nicht die "
+                                    f"Sims-4-Installation:\n{game}\n\nTrotzdem speichern?") != QMessageBox.Yes:
+                return
+        raw["game_folder"] = game
+        raw["game_folder_asked"] = True
         raw["backup_folder"] = self.backup.text() or "./backups"
         raw["report_folder"] = self.reports.text() or "./reports"
         raw["temp_folder"] = self.temp.text()
@@ -123,3 +152,17 @@ class SettingsPage(QWidget):
         raw["extractor"] = self.extractor_path.text() if data == "custom" else data
         self.state.save_config(raw)
         self.state.message.emit("Einstellungen gespeichert.")
+
+
+def choose_game_folder(parent, found):
+    """Zeigt die gefundenen Installationen zur Auswahl. Gibt den gewählten Pfad zurück oder ""."""
+    if not found:
+        QMessageBox.information(parent, "Spielordner",
+                                "Es wurde keine Sims-4-Installation gefunden.\n"
+                                "Bitte den Ordner von Hand wählen (der mit „Data“, „Game“, „EP01“ …).")
+        return ""
+    labels = [game_locator.describe(c) for c in found]
+    label, ok = QInputDialog.getItem(parent, "Sims-4-Installation gefunden",
+                                     "Diesen Ordner als Spielordner verwenden?\n"
+                                     "(macht die Erkennung fehlender CC genau)", labels, 0, False)
+    return found[labels.index(label)]["pfad"] if ok and label in labels else ""

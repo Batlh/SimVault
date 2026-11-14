@@ -216,8 +216,12 @@ class FinderPage(QWidget):
             return
         cfg, backup_first = self.state.cfg, self.backup_first.isChecked()
 
+        self._skipped = []
+        skipped = self._skipped
+
         def job(progress, should_stop):
-            return core.restore(cfg, found, exclude=exclude, backup_first=backup_first, progress=progress)
+            return core.restore(cfg, found, exclude=exclude, backup_first=backup_first, progress=progress,
+                                skipped=skipped)
 
         self.state.runner.start(job, on_done=self._restored, on_error=self._error)
 
@@ -228,6 +232,11 @@ class FinderPage(QWidget):
             msg += f"\nBackup: {backup_path}"
         if failed:
             msg += "\n\nNicht geklappt:\n" + "\n".join(f"• {n}: {r}" for n, r in failed[:10])
-        msg += "\n\nTipp: Danach auf der Übersicht erneut „Analyse starten“."
+        skipped = [s for s in getattr(self, "_skipped", []) if "--ohne" not in s[1]]
+        if skipped:
+            msg += (f"\n\n{len(skipped)} Fund(e) nicht kopiert, damit nichts doppelt im Mods-Ordner landet "
+                    "(Teile schon vorhanden oder in einem anderen Fund enthalten).")
+        msg += ("\n\nTipp: Danach auf der Übersicht erneut „Analyse starten“ – die Seite „Konflikte“ zeigt dann, "
+                "ob sich Zurückgeholtes mit Vorhandenem überschneidet.")
         QMessageBox.information(self, "Zurückholen", msg)
         open_path(os.path.join(self.state.cfg["mods_folder"], cc_finder.RESTORE_SUBFOLDER))

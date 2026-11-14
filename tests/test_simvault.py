@@ -492,7 +492,8 @@ class SearchLocationTests(unittest.TestCase):
             os.makedirs(os.path.join(a, "Windows"))
             dbpf.write_package(os.path.join(a, "Windows", "x.package"), [(dbpf.TYPE_CASP, 0, MISSING_CAS, b"")])
             # verschachtelte Ordner werden nur einmal durchsucht, fehlende ignoriert
-            locs = cc_finder.search_locations({}, [a, os.path.join(a, "Unterordner"), os.path.join(tmp, "fehlt")])
+            locs = cc_finder.search_locations({}, [a, os.path.join(a, "Unterordner"), os.path.join(tmp, "fehlt")],
+                                              drives=False)
             self.assertEqual(locs, [a])
             # Systemordner (hier "Windows") werden übersprungen
             hits, _ = cc_finder.search(locs, {MISSING_CAS})
@@ -769,6 +770,293 @@ class RestorePlanTests(unittest.TestCase):
         self.assertTrue(looks_like_sims(r"D:\Sims4 CC\Haare.zip"))
 
 
+class ConflictTests(unittest.TestCase):
+    """Konflikte werden nach Art eingeordnet und mit der Nutzung abgewogen."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.mods = os.path.join(self.tmp, "Mods")
+        os.makedirs(os.path.join(self.mods, "SimVault_wiederhergestellt"))
+        tex = 0x00B2D882
+        a, b, c, d = (n << 40 for n in (1, 2, 3, 4))
+        w = dbpf.write_package
+        # Set enthält Wimpern komplett (identisch) -> Wimpern überflüssig
+        w(os.path.join(self.mods, "Set.package"), [(dbpf.TYPE_CASP, 0, a, b"lash"), (tex, 0, a, b"tex" * 50, True),
+                                                   (dbpf.TYPE_CASP, 0, b, b"brow")])
+        w(os.path.join(self.mods, "Wimpern.package"), [(dbpf.TYPE_CASP, 0, a, b"lash"), (tex, 0, a, b"tex" * 50)])
+        # zwei Varianten derselben Krone: gleiche ID, anderer Inhalt
+        w(os.path.join(self.mods, "Ersel_Crown_Amnezia bigger.package"), [(dbpf.TYPE_CASP, 0, c, b"big")])
+        w(os.path.join(self.mods, "Ersel_Crown_Amnezia smaller.package"), [(dbpf.TYPE_CASP, 0, c, b"small")])
+        # Überschneidung: gleicher Inhalt, aber jede Datei hat Eigenes
+        w(os.path.join(self.mods, "HaarA.package"), [(dbpf.TYPE_CASP, 0, d, b"hair"), (dbpf.TYPE_CASP, 0, 5 << 40, b"x")])
+        w(os.path.join(self.mods, "HaarB.package"), [(dbpf.TYPE_CASP, 0, d, b"hair"), (dbpf.TYPE_CASP, 0, 6 << 40, b"y")])
+        self.ids = (a, b, c, d)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _analyze(self, id_usage=None):
+        import conflicts
+        scan = mod_folder_scanner.scan_mods_folder(self.mods)
+        return conflicts.analyze_conflicts(scan, id_usage)
+
+    def test_kinds_and_recommendation(self):
+        a, b, c, d = self.ids
+        result = self._analyze({"saves": {c: ["Slot_00000001.save"]}, "tray": {}})
+        by_kind = {k["art"]: k for k in result["konflikte"]}
+        self.assertEqual(set(by_kind), {"Doppelt", "Konflikt", "Überschneidung"})
+        self.assertEqual(by_kind["Doppelt"]["entfernbar"], ["Wimpern.package"])
+        self.assertEqual([e["datei"] for e in result["entfernbar"]], ["Wimpern.package"])
+        self.assertEqual(by_kind["Konflikt"]["unterschiedlich"], 1)
+        self.assertEqual(by_kind["Konflikt"]["genutzt"], 1)
+        self.assertEqual(by_kind["Konflikt"]["spielstaende"], ["Slot_00000001.save"])
+        self.assertIn("Varianten", by_kind["Konflikt"]["empfehlung"])
+        self.assertEqual(by_kind["Überschneidung"]["entfernbar"], [])
+        self.assertEqual(result["konflikte"][0]["art"], "Konflikt")      # das Wichtigste zuerst
+
+    def test_identical_twins_keep_one(self):
+        # zwei inhaltsgleiche Pakete (verschieden gepackt): genau eines ist überflüssig, das zurückgeholte
+        twin = [(dbpf.TYPE_CASP, 0, 9 << 40, b"same" * 30)]
+        dbpf.write_package(os.path.join(self.mods, "Kleid.package"), twin)
+        dbpf.write_package(os.path.join(self.mods, "SimVault_wiederhergestellt", "Kleid_neu.package"),
+                           [twin[0] + (True,)])
+        gone = [e["datei"] for e in self._analyze()["entfernbar"]]
+        self.assertIn(os.path.join("SimVault_wiederhergestellt", "Kleid_neu.package"), gone)
+        self.assertNotIn("Kleid.package", gone)
+
+    def test_newer_version_wins_and_old_copies_are_stripped(self):
+        import conflicts
+
+        def casp(version, name, extra=b""):
+            raw = name.encode("utf-16-be")
+            return struct.pack("<III", version, 0, 0) + bytes([len(raw)]) + raw + extra
+
+        lash, own = 20 << 40, 21 << 40
+        dbpf.write_package(os.path.join(self.mods, "Lashes_v2.package"),
+                           [(dbpf.TYPE_CASP, 0, lash, casp(40, "lash_bk", b"new")), (0x00B2D882, 0, lash, b"tex2")])
+        old_set = os.path.join(self.mods, "SimVault_wiederhergestellt", "Altes_Set.package")
+        dbpf.write_package(old_set, [(dbpf.TYPE_CASP, 0, lash, casp(30, "lash_bk")), (0x00B2D882, 0, lash, b"tex1"),
+                                     (dbpf.TYPE_CASP, 0, own, casp(30, "brow_bk"))])
+        result = self._analyze()
+        conflict = next(c for c in result["konflikte"] if "Altes_Set.package" in c["namen"])
+        self.assertEqual(conflict["art"], "Konflikt")
+        self.assertIn("CAS-Format 40 statt 30", conflict["empfehlung"])
+        self.assertEqual(conflict["loesung"]["aktion"], "bereinigen")
+        self.assertEqual(conflict["loesung"]["behalten"], "Lashes_v2.package")
+        out = conflicts.resolve(self.mods, result, self.tmp, os.path.join(self.tmp, "backups"))
+        self.assertEqual(out["fehler"], [])
+        self.assertEqual([e.instance for e in dbpf.read_index(old_set)], [own])       # nur das Eigene bleibt
+        self.assertEqual(len(dbpf.read_index(os.path.join(out["backup"], "SimVault_wiederhergestellt",
+                                                          "Altes_Set.package"))), 3)   # Original gesichert
+        again = self._analyze()
+        self.assertFalse([c for c in again["konflikte"] if "Altes_Set.package" in c["namen"]])
+        self.assertEqual(again["aufloesbar"], [])
+
+    def test_different_items_with_same_id_are_not_auto_resolved(self):
+        def casp(version, name):
+            raw = name.encode("utf-16-be")
+            return struct.pack("<III", version, 0, 0) + bytes([len(raw)]) + raw
+
+        dbpf.write_package(os.path.join(self.mods, "Rock.package"), [(dbpf.TYPE_CASP, 0, 30 << 40, casp(40, "rock"))])
+        dbpf.write_package(os.path.join(self.mods, "Hose.package"), [(dbpf.TYPE_CASP, 0, 30 << 40, casp(30, "hose"))])
+        result = self._analyze()
+        conflict = next(c for c in result["konflikte"] if "Rock.package" in c["namen"])
+        self.assertIn("verschiedene CC mit derselben ID", conflict["empfehlung"])
+        self.assertIsNone(conflict["loesung"])
+
+    def test_quarantine_moves_files_out(self):
+        import conflicts
+        result = self._analyze()
+        target, moved, failed = conflicts.quarantine(self.mods, [e["datei"] for e in result["entfernbar"]], self.tmp)
+        self.assertEqual((moved, failed), (["Wimpern.package"], []))
+        self.assertFalse(os.path.exists(os.path.join(self.mods, "Wimpern.package")))
+        self.assertTrue(os.path.isfile(os.path.join(target, "Wimpern.package")))
+        self.assertEqual(self._analyze()["entfernbar"], [])
+
+
+class GameLocatorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _install(self, *parts, packs=()):
+        path = os.path.join(self.tmp, *parts)
+        os.makedirs(os.path.join(path, "Data", "Client"))
+        for pack in packs:
+            os.makedirs(os.path.join(path, pack))
+        return path
+
+    def test_finds_installs_and_ignores_user_folder(self):
+        import game_locator
+        common = self._install("Program Files", "EA Games", "The Sims 4", packs=("EP01", "GP02", "Game"))
+        deep = self._install("Zocken", "EA", "Die Sims 4")
+        os.makedirs(os.path.join(self.tmp, "Dokumente", "Die Sims 4", "Mods"))    # Benutzerordner: keine Installation
+        quick = game_locator.find_game_folders(deep=False, roots=[self.tmp])
+        self.assertEqual([(c["pfad"], c["packs"]) for c in quick], [(common, 2)])
+        both = game_locator.find_game_folders(deep=True, roots=[self.tmp])
+        self.assertEqual([c["pfad"] for c in both], [common, deep])
+
+    def test_steam_library_file(self):
+        import game_locator
+        steam = os.path.join(self.tmp, "Steam")
+        lib = os.path.join(self.tmp, "Lib2")
+        os.makedirs(os.path.join(steam, "steamapps"))
+        game = self._install("Lib2", "steamapps", "common", "The Sims 4")
+        with open(os.path.join(steam, "steamapps", "libraryfolders.vdf"), "w", encoding="utf-8") as f:
+            f.write('"libraryfolders"\n{\n "1"\n {\n  "path"\t\t"%s"\n }\n}\n' % lib.replace("\\", "\\\\"))
+        found = [p for p, _src in game_locator._steam_candidates([steam]) if game_locator.is_game_folder(p)]
+        self.assertEqual(found, [game])
+
+
+    def test_registry_entries(self):
+        """Registry-Suche mit nachgebauter Registry: EA-App-Eintrag und Eintrag in der Programmliste."""
+        import types
+        import game_locator
+        ea = self._install("EA", "The Sims 4", packs=("EP01",))
+        steam = self._install("SteamLib", "The Sims 4")
+        uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+        registry = {
+            ("HKLM", r"SOFTWARE\Maxis\The Sims 4"): {"Install Dir": ea},
+            ("HKLM", uninstall): {},
+            ("HKLM", uninstall + "\\Steam App 1222670"): {"DisplayName": "The Sims™ 4", "InstallLocation": steam},
+            ("HKLM", uninstall + "\\{ABC}"): {"DisplayName": "7-Zip"},
+        }
+
+        class Key:
+            def __init__(self, root, path):
+                self.root, self.path = root, path
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def open_key(root, path, _reserved=0, _access=0):
+            if (root, path) not in registry:
+                raise OSError(path)
+            return Key(root, path)
+
+        def query_value(key, name):
+            values = registry[(key.root, key.path)]
+            if name not in values:
+                raise OSError(name)
+            return values[name], 1
+
+        def subkeys(key):
+            prefix = key.path + "\\"
+            return [p[len(prefix):] for (r, p) in registry if r == key.root and p.startswith(prefix)]
+
+        fake = types.SimpleNamespace(
+            HKEY_LOCAL_MACHINE="HKLM", HKEY_CURRENT_USER="HKCU", KEY_READ=1, KEY_WOW64_64KEY=2, KEY_WOW64_32KEY=4,
+            OpenKey=open_key, QueryValueEx=query_value,
+            QueryInfoKey=lambda key: (len(subkeys(key)), 0, 0), EnumKey=lambda key, i: subkeys(key)[i])
+        old = sys.modules.get("winreg")
+        sys.modules["winreg"] = fake
+        try:
+            found = {os.path.normpath(p): src for p, src in game_locator._registry_candidates()}
+        finally:
+            if old is None:
+                del sys.modules["winreg"]
+            else:
+                sys.modules["winreg"] = old
+        self.assertEqual(found, {ea: "EA App / Origin (Registry)", steam: "Windows-Programmliste"})
+
+
+class RepairTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.mods = os.path.join(self.tmp, "Mods")
+        self.saves = os.path.join(self.tmp, "saves")
+        self.backups = os.path.join(self.tmp, "backups")
+        os.makedirs(self.mods)
+        os.makedirs(self.saves)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _check(self, deep=True):
+        import repair
+        return {it["datei"]: it for it in repair.check_all(self.mods, self.saves, deep=deep)}
+
+    def test_diagnosis(self):
+        dbpf.write_package(os.path.join(self.mods, "gut.package"), [(dbpf.TYPE_CASP, 0, CAS_ID, b"ok")])
+        open(os.path.join(self.mods, "leer.package"), "wb").close()
+        with open(os.path.join(self.mods, "seite.package"), "w") as f:
+            f.write("<!DOCTYPE html><html>Please log in</html>")
+        full = os.path.join(self.mods, "voll.package")
+        dbpf.write_package(full, [(dbpf.TYPE_CASP, 0, CAS_ID_2, b"x" * 500)])
+        with open(full, "rb") as f:
+            data = f.read()
+        with open(os.path.join(self.mods, "abgeschnitten.package"), "wb") as f:
+            f.write(data[:300])
+        items = self._check()
+        self.assertEqual(items["gut.package"]["zustand"], "in Ordnung")
+        self.assertEqual({n: items[n]["code"] for n in ("leer.package", "seite.package", "abgeschnitten.package")},
+                         {"leer.package": "leer", "seite.package": "webseite",
+                          "abgeschnitten.package": "abgeschnitten"})
+        self.assertFalse(any(items[n]["reparierbar"] for n in ("leer.package", "seite.package",
+                                                               "abgeschnitten.package")))
+
+    def test_broken_resource_is_dropped_and_original_kept(self):
+        import repair
+        path = os.path.join(self.mods, "merge.package")
+        dbpf.write_package(path, [(dbpf.TYPE_CASP, 0, CAS_ID, b"A" * 400, True),
+                                  (dbpf.TYPE_CASP, 0, CAS_ID_2, b"B" * 400, True),
+                                  (dbpf.TYPE_OBJD, 0, OBJ_ID, b"C" * 50)])
+        entries = dbpf.read_index(path)
+        with open(path, "r+b") as f:                 # zweite Ressource zerstören
+            f.seek(entries[1].offset)
+            f.write(b"\xff" * entries[1].file_size)
+        self.assertEqual(self._check(deep=False)["merge.package"]["zustand"], "in Ordnung")   # nur gründlich sichtbar
+        items = self._check(deep=True)
+        self.assertEqual(items["merge.package"]["code"], "ressourcen")
+        backup_dir, results = repair.repair_all(list(items.values()), self.backups, self.mods)
+        self.assertEqual([(n, ok) for n, ok, _m in results], [("merge.package", True)])
+        self.assertEqual([e.instance for e in dbpf.read_index(path)], [CAS_ID, OBJ_ID])
+        self.assertEqual(dbpf.read_resource(path, dbpf.read_index(path)[0]), b"A" * 400)
+        self.assertTrue(os.path.isfile(os.path.join(backup_dir, "Mods", "merge.package")))
+        self.assertEqual(self._check(deep=True)["merge.package"]["zustand"], "in Ordnung")
+
+    def test_misnamed_zip_is_unpacked(self):
+        import zipfile
+        import repair
+        inner = os.path.join(self.tmp, "Echt.package")
+        dbpf.write_package(inner, [(dbpf.TYPE_CASP, 0, CAS_ID, b"ok")])
+        fake = os.path.join(self.mods, "Download.package")
+        with zipfile.ZipFile(fake, "w") as z:
+            z.write(inner, "Ordner/Echt.package")
+        items = self._check()
+        self.assertEqual(items["Download.package"]["code"], "archiv")
+        _dir, results = repair.repair_all(list(items.values()), self.backups, self.mods)
+        self.assertTrue(results[0][1], results)
+        self.assertFalse(os.path.exists(fake))
+        self.assertEqual(len(dbpf.read_index(os.path.join(self.mods, "Echt.package"))), 1)
+
+    def test_save_restored_from_last_good_version(self):
+        import repair
+        good = [(dbpf.TYPE_SAVEGAME_DATA, 0, 1, make_savegame_proto([CAS_ID], []), True)]
+        save = os.path.join(self.saves, "Slot_00000001.save")
+        with open(save, "wb") as f:
+            f.write(b"DBPF" + b"\0" * 40)             # kaputter Spielstand
+        with open(save + ".ver0", "wb") as f:
+            f.write(b"kaputt")                        # jüngste Sicherung ebenfalls kaputt
+        dbpf.write_package(save + ".ver1", good)
+        os.utime(save + ".ver1", (1_700_000_000, 1_700_000_000))
+        dbpf.write_package(os.path.join(self.saves, "Slot_00000002.save"), good)
+        items = self._check()
+        self.assertEqual(items["Slot_00000002.save"]["zustand"], "in Ordnung")
+        broken = items["Slot_00000001.save"]
+        self.assertTrue(broken["reparierbar"])
+        self.assertTrue(broken["ersatz"].endswith(".ver1"))
+        backup_dir, results = repair.repair_all(list(items.values()), self.backups, self.mods)
+        self.assertTrue(results[0][1], results)
+        self.assertEqual(self._check()["Slot_00000001.save"]["zustand"], "in Ordnung")
+        self.assertTrue(os.path.isfile(os.path.join(backup_dir, "saves", "Slot_00000001.save")))
+
+
 class SourceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -894,6 +1182,12 @@ class GuiSmokeTests(unittest.TestCase):
             self.assertEqual(mods.model.rowCount(), len(analysis["usage"]))
             missing = dict(window.pages)["Fehlende CC"]
             self.assertEqual(missing.model.rowCount(), len(analysis["missing"]["teile"]))
+            conflicts = dict(window.pages)["Konflikte"]
+            self.assertEqual(conflicts.model.rowCount(), len(analysis["conflicts"]["konflikte"]))
+            self.assertGreater(conflicts.model.rowCount(), 0)
+            repair_page = dict(window.pages)["Reparatur"]
+            repair_page._checked(core.check_health(window.state.cfg, deep=True), True)
+            self.assertGreater(repair_page.proxy.rowCount(), 0)          # Kaputt.package, Leer.package …
             # Relative Ordner liegen neben der config.json
             self.assertEqual(window.state.cfg["report_folder"], os.path.join(tmp, "reports"))
             window.close()

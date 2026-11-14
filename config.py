@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
     "savegames_folder": "",     # leer = <sims_folder>/saves
     "tray_folder": "",          # leer = <sims_folder>/Tray
     "game_folder": "",          # Spiel-Installation, leer = automatisch suchen (optional, für sichere Fehlend-Erkennung)
+    "game_folder_asked": False,  # Programmfenster hat die gefundene Installation schon einmal zur Auswahl gezeigt
     "search_folders": [],       # Ordner für "find" – leer = Downloads, alte Mods-Ordner, Mod-Manager … automatisch
     "search_drives": True,      # "find" durchsucht zusätzlich alle weiteren Laufwerke (D:, E:, USB …)
     "extractor": "",            # Entpacker für RAR/7z: leer = automatisch, Pfad zu 7z.exe/UnRAR.exe/tar.exe, "none" = aus
@@ -99,7 +100,7 @@ def resolve_paths(config):
         if not cfg.get(key) and sims:
             cfg[key] = os.path.join(sims, sub)
     if not cfg.get("game_folder"):
-        from missing_cc import find_game_folder
+        from game_locator import find_game_folder
         cfg["game_folder"] = find_game_folder()
     return cfg
 

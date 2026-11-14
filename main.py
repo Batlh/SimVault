@@ -84,15 +84,45 @@ def _print_summary(mod_scan, usage, missing=None):
                     print(f"  {len(h['fehlend']):>3} fehlend  {h['name']}{by}")
         else:
             print("\nFehlende CC: keine gefunden")
-    if mod_scan.issues:
-        print(f"\n{len(mod_scan.issues)} Problem(e):")
-        for issue in mod_scan.issues:
+    issues = [i for i in mod_scan.issues if i.kind != "Konflikt"]
+    if issues:
+        print(f"\n{len(issues)} Problem(e):")
+        for issue in issues:
             print(f"  [{issue.severity}] {issue.kind}: {len(issue.files)} Datei(en)")
 
 
-def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_info=None, found=None):
+def _print_conflicts(result):
+    """Geprüfte Konflikte: was sich überschneidet, wie, und was zu tun ist."""
+    conflicts = result["konflikte"]
+    if not conflicts:
+        print("\nKonflikte: keine")
+        return
+    from collections import Counter
+    kinds = Counter(c["art"] for c in conflicts)
+    print("\nKonflikte geprüft: " + ", ".join(f"{n}× {k}" for k, n in kinds.items()))
+    for c in conflicts[:12]:
+        used = f", {c['genutzt']} in Benutzung" if c["genutzt"] else ""
+        print(f"  [{c['art']}] {' ↔ '.join(c['namen'])}")
+        print(f"      {c['teile']} gemeinsame{'s Teil' if c['teile'] == 1 else ' Teile'} ({c['identisch']} identisch, "
+              f"{c['unterschiedlich']} unterschiedlich{used})")
+        print(f"      → {c['empfehlung']}")
+    if len(conflicts) > 12:
+        print(f"  … {len(conflicts) - 12} weitere im Bericht")
+    todo = []
+    if result["entfernbar"]:
+        size = sum(e["groesse"] for e in result["entfernbar"]) / 1048576
+        todo.append(f"{len(result['entfernbar'])} überflüssige Datei(en) aussortieren ({size:.1f} MB)")
+    if result.get("aufloesbar"):
+        todo.append(f"{len(result['aufloesbar'])} Konflikt(e) mit veralteter Fassung auflösen")
+    if todo:
+        print("\nSicher machbar: " + " und ".join(todo) + " – mit: py -3 main.py conflicts --aufraeumen")
+
+
+def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_info=None, found=None,
+                  conflicts=None):
     from report_generator import generate_report
     files = generate_report(mod_scan, usage, saves, missing=missing, missing_info=missing_info, found=found,
+                            conflicts=conflicts,
                             output_dir=cfg["report_folder"],
                             db_path=cfg["database"].get("sqlite_path"),
                             formats=cfg["report_formats"],
@@ -133,14 +163,18 @@ def cmd_analyze(cfg, args):
     mod_scan = _scan_mods(cfg)
     print("Lese Spielstände und Bibliothek …")
     tray = None if args.no_tray else cfg.get("tray_folder")
-    usage = analyze_usage(mod_scan, saves, tray_folder=tray, progress=_progress)
+    id_usage = {}
+    usage = analyze_usage(mod_scan, saves, tray_folder=tray, progress=_progress, id_usage=id_usage)
 
     missing = missing_info = None
     if not args.no_missing:
         missing, missing_info = _find_missing(cfg, mod_scan, saves, tray)
+    import core
+    conflicts = core.check_conflicts(cfg, mod_scan, id_usage, _progress)
 
     _print_summary(mod_scan, usage, missing)
-    _write_report(cfg, mod_scan, usage, saves, missing, missing_info)
+    _print_conflicts(conflicts)
+    _write_report(cfg, mod_scan, usage, saves, missing, missing_info, conflicts=conflicts)
     if missing and missing["teile"]:
         print('\nTipp: Mit "python main.py find" suchst du die fehlende CC auf deinem PC '
               "(Downloads, alte Mods-Ordner, ZIP-Archive).")
@@ -232,8 +266,16 @@ def cmd_find(cfg, args):
               '(einzelne Funde auslassen: --ohne WickedWhims)')
 
     from savegame_analyzer import analyze_usage
-    usage = analyze_usage(mod_scan, saves, tray_folder=cfg.get("tray_folder"), progress=_progress)
-    _write_report(cfg, mod_scan, usage, saves, missing, info,
+    import core
+    if restored:
+        mod_scan = _scan_mods(cfg)      # der Mods-Ordner hat sich geändert
+    id_usage = {}
+    usage = analyze_usage(mod_scan, saves, tray_folder=cfg.get("tray_folder"), progress=_progress,
+                          id_usage=id_usage)
+    conflicts = core.check_conflicts(cfg, mod_scan, id_usage, _progress)
+    if restored:
+        _print_conflicts(conflicts)
+    _write_report(cfg, mod_scan, usage, saves, missing, info, conflicts=conflicts,
                   found={"dateien": found, "ordner": folders, "nicht_lesbar": unreadable,
                          "gefunden": n_found, "gesucht": len(parts)})
     return 0
@@ -324,6 +366,65 @@ def cmd_restore(cfg, args):
     return 0
 
 
+def cmd_conflicts(cfg, args):
+    """Prüft Konflikte genau (gleich/unterschiedlich, genutzt?) und sortiert Überflüssiges auf Wunsch aus."""
+    from savegame_analyzer import find_saves, analyze_usage
+    import core
+    if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
+        return 1
+    mod_scan = _scan_mods(cfg)
+    saves = find_saves(cfg["savegames_folder"])
+    print(f"Gleiche mit {len(saves)} Spielständen und der Bibliothek ab …")
+    id_usage = {}
+    analyze_usage(mod_scan, saves, tray_folder=cfg.get("tray_folder"), progress=_progress, id_usage=id_usage)
+    result = core.check_conflicts(cfg, mod_scan, id_usage, _progress)
+    _print_conflicts(result)
+    if args.aufraeumen and (result["entfernbar"] or result.get("aufloesbar")):
+        out = core.clean_conflicts(cfg, result)
+        if out["verschoben"]:
+            print(f"\n{len(out['verschoben'])} Datei(en) verschoben nach {out['ordner']}")
+            print("Es wurde nichts gelöscht – zum Rückgängigmachen einfach zurück in den Mods-Ordner schieben.")
+        for name, count in out["bereinigt"]:
+            print(f"  {count} veraltete Doppel aus {name} entfernt")
+        if out["bereinigt"]:
+            print(f"Originale der geänderten Pakete: {out['backup']}")
+        for name, reason in out["fehler"]:
+            print(f"  nicht geklappt: {name} – {reason}")
+    return 0
+
+
+def cmd_repair(cfg, args):
+    """Prüft CC und Spielstände auf Schäden; mit --ausfuehren wird repariert, was sicher geht."""
+    import core
+    import repair
+    if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
+        return 1
+    print("Prüfe CC-Dateien und Spielstände" + (" (gründlich – das dauert)" if args.gruendlich else "") + " …")
+    items = core.check_health(cfg, deep=args.gruendlich, progress=_progress)
+    broken = [it for it in items if it["zustand"] == repair.BROKEN]
+    n_saves = sum(1 for it in items if it["typ"] == "Spielstand")
+    print(f"\n{len(items) - n_saves} CC-Dateien und {n_saves} Spielstände geprüft: "
+          f"{len(broken)} beschädigt.")
+    for it in broken:
+        mark = "reparierbar" if it["reparierbar"] else "nicht reparierbar"
+        print(f"  [{it['typ']}, {mark}] {it['datei']}")
+        print(f"      {it['problem']}")
+        print(f"      → {it['loesung']}")
+    fixable = [it for it in broken if it["reparierbar"]]
+    if not fixable:
+        if broken:
+            print("\nNichts davon lässt sich reparieren – die Dateien neu herunterladen.")
+        return 0
+    if not args.ausfuehren:
+        print(f"\n{len(fixable)} davon lassen sich reparieren: py -3 main.py repair --ausfuehren")
+        return 0
+    backup_dir, results = core.repair_items(cfg, items, progress=_progress)
+    print(f"\nOriginale gesichert in {backup_dir}")
+    for name, ok, message in results:
+        print(f"  {'repariert' if ok else 'nicht geklappt'}: {name} – {message}")
+    return 0
+
+
 def cmd_backup(cfg, args):
     from backup_manager import backup_manager
     source = cfg["mods_folder"] if args.target == "mods" else cfg["savegames_folder"]
@@ -347,7 +448,6 @@ def _ask(prompt, default=""):
 def cmd_setup(cfg, args):
     """Fragt die wichtigsten Einstellungen ab und speichert sie in config.json."""
     import archive_tools
-    from missing_cc import find_game_folder
     raw = cfg_mod.load_config(args.config)
     print("SimVault einrichten – Enter übernimmt den Vorschlag in [Klammern].\n")
 
@@ -358,7 +458,19 @@ def cmd_setup(cfg, args):
     raw["sims_folder"] = sims
 
     # 2. Spielordner (optional)
-    game = _ask("2) Spielordner (Installation, optional – '-' = keiner)", raw.get("game_folder") or find_game_folder())
+    import game_locator
+    print("\n2) Spielordner (die Installation – macht die Erkennung fehlender CC genau). Suche …")
+    found = game_locator.find_game_folders(deep=True)
+    for i, c in enumerate(found, 1):
+        print(f"   {i}) {game_locator.describe(c)}")
+    if not found:
+        print("   Keine Installation gefunden – Pfad von Hand eingeben oder mit '-' überspringen.")
+    default = raw.get("game_folder") or (found[0]["pfad"] if found else "")
+    game = _ask("   Nummer, eigener Pfad oder '-' für keinen", default)
+    if game.isdigit() and 1 <= int(game) <= len(found):
+        game = found[int(game) - 1]["pfad"]
+    if game not in ("", "-") and not game_locator.is_game_folder(game):
+        print(f"   Achtung: In {game} liegt kein Data\\Client – das ist vermutlich nicht die Installation.")
     raw["game_folder"] = "" if game == "-" else game
 
     # 3. Entpacker für RAR/7z
@@ -447,6 +559,16 @@ def build_parser():
     r.add_argument("--ohne-backup", action="store_true", help="Mods-Ordner vorher nicht sichern")
     r.set_defaults(func=cmd_restore)
 
+    k = sub.add_parser("conflicts", help="Konflikte genau prüfen: gleich oder unterschiedlich, genutzt oder nicht")
+    k.add_argument("--aufraeumen", action="store_true",
+                   help="überflüssige Dateien (stecken komplett in anderen) aus dem Mods-Ordner aussortieren")
+    k.set_defaults(func=cmd_conflicts)
+
+    rp = sub.add_parser("repair", help="CC und Spielstände auf Schäden prüfen und reparieren")
+    rp.add_argument("--gruendlich", action="store_true", help="jede Ressource entpacken (findet mehr, dauert länger)")
+    rp.add_argument("--ausfuehren", action="store_true", help="reparieren, was sich sicher reparieren lässt")
+    rp.set_defaults(func=cmd_repair)
+
     st = sub.add_parser("setup", help="einrichten: Ordner, Entpacker für RAR/7z, Laufwerke")
     st.set_defaults(func=cmd_setup)
 
@@ -455,7 +577,17 @@ def build_parser():
     return p
 
 
+def _safe_output():
+    """Zeichen, die die Windows-Konsole nicht kennt (z. B. → bei umgeleiteter Ausgabe), dürfen nie zum Absturz führen."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None):
+    _safe_output()
     parser = build_parser()
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)

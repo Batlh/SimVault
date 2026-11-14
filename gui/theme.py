@@ -19,6 +19,11 @@ STATUS_COLORS = {
     "defekt": ERROR,
     "nicht nachweisbar": MUTED,
     "nicht prüfbar": MUTED,
+    "in Ordnung": ACCENT,
+    "Konflikt": ERROR,
+    "Überschreibung": WARN,
+    "Doppelt": WARN,
+    "Überschneidung": MUTED,
 }
 
 QSS = f"""
