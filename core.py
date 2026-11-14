@@ -145,7 +145,7 @@ def write_report(cfg, analysis=None, mod_scan=None, found=None):
                            output_dir=cfg["report_folder"], db_path=cfg["database"].get("sqlite_path"),
                            formats=cfg["report_formats"], app_name=cfg["branding"].get("app_name", "SimVault"),
                            missing=analysis.get("missing"), missing_info=analysis.get("missing_info"), found=found,
-                           conflicts=analysis.get("conflicts"))
+                           conflicts=analysis.get("conflicts"), logo_path=cfg["branding"].get("logo_path"))
 
 
 def search_locations(cfg, extra_folders=None, drives=None, whole_pc=False):
@@ -200,7 +200,59 @@ def restore(cfg, found_files, exclude=(), backup_first=True, progress=None, skip
 def backup(cfg, target="mods", mode="full", file_list=None):
     from backup_manager import backup_manager
     source = cfg["mods_folder"] if target == "mods" else cfg["savegames_folder"]
-    return backup_manager(mode, source, cfg["backup_folder"], file_list=file_list)
+    path = backup_manager(mode, source, cfg["backup_folder"], file_list=file_list)
+    rules = cfg.get("backup_cleanup") or {}
+    if rules.get("enabled"):
+        cleanup_backups(cfg)
+    return path
+
+
+def list_backups(cfg):
+    import backup_manager
+    return backup_manager.list_backups(cfg["backup_folder"])
+
+
+def _backup_targets(cfg):
+    """Zielordner fürs Wiederherstellen, gefunden über den Ordnernamen im Backup-Namen (Mods, saves)."""
+    targets = {}
+    for key, folder in (("mods", cfg.get("mods_folder")), ("saves", cfg.get("savegames_folder"))):
+        if folder:
+            targets[os.path.basename(os.path.normpath(folder)).lower()] = folder
+            targets.setdefault(key, folder)
+    return targets
+
+
+def restore_backup(cfg, name, overwrite=True, exact=False, progress=None):
+    """Spielt ein Backup in den Mods- bzw. Spielstand-Ordner zurück (siehe backup_manager.restore_backup)."""
+    import backup_manager
+    return backup_manager.restore_backup(cfg["backup_folder"], name, _backup_targets(cfg), overwrite, exact, progress)
+
+
+def cleanup_backups(cfg, dry_run=False):
+    """Alte Backups nach den Regeln aus backup_cleanup aufräumen. dry_run: nur die Liste der Kandidaten."""
+    import backup_manager
+    rules = cfg.get("backup_cleanup") or {}
+    keep, days = int(rules.get("keep_last", 10)), int(rules.get("max_age_days", 30))
+    if dry_run:
+        return backup_manager.plan_cleanup(cfg["backup_folder"], keep, days)
+    return backup_manager.cleanup_backups(cfg["backup_folder"], keep, days)
+
+
+def check_update():
+    """Neuestes Release auf GitHub abfragen (siehe updater.check). Wirft OSError ohne Internet."""
+    import updater
+    return updater.check()
+
+
+def download_update(info, progress=None, should_stop=None):
+    import updater
+    return updater.download(info, os.path.join(user_data_dir(), "updates"), progress, should_stop)
+
+
+def install_update(zip_path):
+    """Tauscht das Programm nach dem Beenden aus. False = geht hier nicht (ZIP von Hand entpacken)."""
+    import updater
+    return updater.install(zip_path, os.path.join(user_data_dir(), "updates"))
 
 
 def latest_report(cfg, with_found=False):

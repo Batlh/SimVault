@@ -111,8 +111,20 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 - 🌐 **CC Search Links** — search links for TSR, CurseForge, ModTheSims, Tumblr, Patreon,
   LoversLab, SexySims, NewSea and Google, generated from the file name (e.g. for broken files).
 
-- 🗜️ **Backup Manager** — Full (ZIP), Delta (only changed files, SHA256) and Selective backups
-  of the Mods or saves folder.
+- 🗜️ **Backup Manager & Recovery** — Full (ZIP), Delta (only changed files, SHA256) and Selective backups
+  of the Mods or saves folder. **Restore** with one click: a delta automatically plays back the last full
+  backup plus all deltas up to the chosen one; choose between "replace existing files", "only add what is
+  missing" and "bring the folder exactly to the backup state" (files the backup does not know are put aside,
+  not deleted). The originals saved by Repair and by the conflict clean-up can be restored the same way.
+  **Old backups are cleaned up** by rule (keep the last N full backups per folder, delete older than N days;
+  the newest full backup always stays) — on demand or automatically after every backup.
+
+- 🔄 **Auto-Updater** — checks GitHub for a newer release on start (can be switched off), shows the changelog,
+  downloads the new version and swaps the program after it closes; settings, reports, backups and your own
+  extensions stay. From source it only tells you (update with `git pull`). Nothing is sent anywhere.
+
+- 🎨 **Custom Branding** — your own program name and logo for the window and the reports (`branding` in
+  `config.json` or in the settings).
 
 - ⚙️ **Config Manager & Setup** — `python main.py setup` asks for the Sims folder, game folder,
   the unpacker for RAR/7z (found ones, own path or none) and whether to search other drives.
@@ -134,12 +146,9 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 - 🔐 **Secure Login Manager** — manual login in a visible window with 2FA support;
   cookies stored **AES256-encrypted** and decrypted only in RAM at runtime (no plain-text cookies on disk)
 - 🛡️ **Captcha Handling** — manual captcha solving via the visible login window (optional automation later)
-- ♻️ **Recovery** — restore function for Full, Delta and Selective backups, automatic cleanup of old backups
 - 📱 **Mobile App** for remote analysis
-- 🔄 **Auto-Updater**
 - 🌍 **Full Internationalization (i18n)**
 - 🗄️ **Optional MySQL/PostgreSQL database plugin** for advanced users
-- 🎨 **Custom Branding** (app name, logo)
 
 ---
 
@@ -167,6 +176,10 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
     python main.py repair --gruendlich --ausfuehren   # thorough check, repair what can be repaired safely
     python main.py backup mods          # backup (mode from config.json)
     python main.py backup saves --mode delta
+    python main.py backup list          # show all backups
+    python main.py backup restore Mods_backup_20261114_203000.zip   # play a backup back (--nur-fehlendes, --genau)
+    python main.py backup cleanup       # show old backups that would be removed (--ausfuehren deletes them)
+    python main.py update               # look for a newer SimVault version (--laden downloads it)
     python main.py setup                # set up: folders, RAR/7z unpacker, drives
     python main.py config               # show detected paths
     ```

@@ -2,8 +2,9 @@
 
 import os
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
-                               QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+                               QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 import core
 import archive_tools
@@ -12,6 +13,8 @@ from ..widgets import PathEdit, open_path, page_header
 
 
 class SettingsPage(QWidget):
+    check_update = Signal()          # „Jetzt nach Updates suchen“ – das Hauptfenster übernimmt
+
     def __init__(self, state):
         super().__init__()
         self.state = state
@@ -60,6 +63,22 @@ class SettingsPage(QWidget):
         s.addRow("Archive größer als … überspringen:", self.max_mb)
         lay.addWidget(search)
 
+        program = QGroupBox("Programm")
+        pf = QFormLayout(program)
+        up_row = QHBoxLayout()
+        self.update_on_start = QCheckBox("beim Start nach einer neuen Version suchen")
+        update_now = QPushButton("Jetzt nach Updates suchen")
+        update_now.clicked.connect(self.check_update.emit)
+        up_row.addWidget(self.update_on_start, 1)
+        up_row.addWidget(update_now)
+        self.app_name = QLineEdit()
+        self.app_name.setPlaceholderText("SimVault")
+        self.logo = PathEdit(folder=False, placeholder="optional – eigenes Logo (PNG/JPG) für Fenster und Berichte")
+        pf.addRow("Updates:", up_row)
+        pf.addRow("Programmname:", self.app_name)
+        pf.addRow("Logo:", self.logo)
+        lay.addWidget(program)
+
         bottom = QHBoxLayout()
         save = QPushButton("Speichern")
         save.setObjectName("Primary")
@@ -87,6 +106,11 @@ class SettingsPage(QWidget):
         self.drives.setChecked(bool(raw.get("search_drives", True)))
         self.max_mb.setValue(int(raw.get("max_archive_mb", 4096)))
         self.cfg_label.setText(self.state.config_path)
+        self.update_on_start.setChecked(bool((raw.get("updates") or {}).get("check_on_start", True)))
+        branding = raw.get("branding") or {}
+        name = branding.get("app_name", "")
+        self.app_name.setText("" if name == "SimVault" else name)
+        self.logo.setText(branding.get("logo_path", ""))
 
         self.tools = archive_tools.find_tools()
         self.extractor.blockSignals(True)
@@ -146,6 +170,9 @@ class SettingsPage(QWidget):
         raw["backup_folder"] = self.backup.text() or "./backups"
         raw["report_folder"] = self.reports.text() or "./reports"
         raw["temp_folder"] = self.temp.text()
+        raw["updates"] = {"check_on_start": self.update_on_start.isChecked()}
+        raw["branding"] = dict(raw.get("branding") or {}, app_name=self.app_name.text().strip() or "SimVault",
+                               logo_path=self.logo.text())
         raw["search_drives"] = self.drives.isChecked()
         raw["max_archive_mb"] = self.max_mb.value()
         data = self.extractor.currentData()

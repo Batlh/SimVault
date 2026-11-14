@@ -1,6 +1,9 @@
 # Modul: gui/main_window.py – Hauptfenster: Seitenleiste links, Seiten rechts, Statusleiste unten
 
-from PySide6.QtCore import Qt, QSize, QTimer
+import os
+
+from PySide6.QtCore import QSize, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow, QMessageBox,
                                QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -15,15 +18,17 @@ from .pages.backup import BackupPage
 from .pages.sources import SourcesPage
 from .pages.settings import SettingsPage, choose_game_folder
 
-VERSION = "0.6"
+from version import __version__ as VERSION
 
 
 class MainWindow(QMainWindow):
+    update_checked = Signal(object)          # Ergebnis der Update-Prüfung aus dem Hintergrund
+
     def __init__(self, config_path=None, first_run=False):
         super().__init__()
-        self.setWindowTitle("SimVault – Sims 4 CC-Verwaltung")
         self.resize(1280, 820)
         self.state = AppState(config_path)
+        self._update_info = None
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -35,13 +40,22 @@ class MainWindow(QMainWindow):
         side.setFixedWidth(210)
         side_lay = QVBoxLayout(side)
         side_lay.setContentsMargins(0, 0, 0, 8)
-        title = QLabel("SimVault")
-        title.setObjectName("AppTitle")
-        side_lay.addWidget(title)
+        self.logo = QLabel()
+        self.logo.setContentsMargins(16, 14, 0, 0)
+        self.logo.hide()
+        side_lay.addWidget(self.logo)
+        self.title = QLabel("SimVault")
+        self.title.setObjectName("AppTitle")
+        side_lay.addWidget(self.title)
         self.nav = QListWidget()
         self.nav.setObjectName("Sidebar")
         self.nav.setIconSize(QSize(18, 18))
         side_lay.addWidget(self.nav, 1)
+        self.update_btn = QPushButton("Update verfügbar")
+        self.update_btn.setObjectName("Primary")
+        self.update_btn.hide()
+        self.update_btn.clicked.connect(self.show_update)
+        side_lay.addWidget(self.update_btn)
         version = QLabel(f"Version {VERSION}")
         version.setObjectName("Muted")
         version.setContentsMargins(16, 0, 0, 0)
@@ -71,6 +85,8 @@ class MainWindow(QMainWindow):
         for _name, page in self.pages:
             if hasattr(page, "navigate"):
                 page.navigate.connect(self.go_to)
+            if hasattr(page, "check_update"):
+                page.check_update.connect(lambda: self.check_update(manual=True))
 
         # Statusleiste: Meldung, Fortschrittsbalken, Abbrechen
         bar = self.statusBar()
@@ -88,6 +104,12 @@ class MainWindow(QMainWindow):
         self.state.runner.progress.connect(self.status_label.setText)
         self.state.runner.busy_changed.connect(self._busy)
         self.state.message.connect(self.status_label.setText)
+
+        self.state.config_changed.connect(self._apply_branding)
+        self._apply_branding()
+        self.update_checked.connect(self._update_checked)
+        if first_run and (self.state.cfg.get("updates") or {}).get("check_on_start", True):
+            QTimer.singleShot(1500, self.check_update)
 
         if not self.state.cfg.get("sims_folder"):
             self.go_to("Einstellungen")
@@ -115,6 +137,101 @@ class MainWindow(QMainWindow):
         else:
             self.status_label.setText("Sims-4-Installation nicht gefunden – unter „Einstellungen“ festlegen.")
         self.state.save_config(raw)
+
+    # -- Custom Branding: eigener Programmname und eigenes Logo ---------------------
+    def _apply_branding(self):
+        branding = self.state.cfg.get("branding") or {}
+        name = branding.get("app_name") or "SimVault"
+        self.title.setText(name)
+        self.setWindowTitle(f"{name} – Sims 4 CC-Verwaltung")
+        logo = branding.get("logo_path")
+        pixmap = QPixmap(logo) if logo and os.path.isfile(logo) else QPixmap()
+        if pixmap.isNull():
+            self.logo.hide()
+        else:
+            self.logo.setPixmap(pixmap.scaledToHeight(48))
+            self.logo.show()
+
+    # -- Auto-Updater ---------------------------------------------------------------
+    def check_update(self, manual=False):
+        """Fragt im Hintergrund auf GitHub nach einer neueren Version (blockiert das Fenster nicht)."""
+        import threading
+        import core
+
+        def work():
+            try:
+                info = core.check_update()
+            except Exception as e:           # kein Internet o. Ä.: beim Start still, bei Klick melden
+                info = {"fehler": str(e)}
+            info["manuell"] = manual
+            self.update_checked.emit(info)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_checked(self, info):
+        if info.get("fehler"):
+            if info["manuell"]:
+                QMessageBox.warning(self, "Update", f"GitHub ist gerade nicht erreichbar:\n{info['fehler']}")
+            return
+        if info["neuer"]:
+            self._update_info = info
+            self.update_btn.setText(f"Update auf {info['neueste']}")
+            self.update_btn.show()
+            if info["manuell"]:
+                self.show_update()
+            else:
+                self.status_label.setText(f"Version {info['neueste']} ist verfügbar – links unten auf „Update“ klicken.")
+        elif info["manuell"]:
+            QMessageBox.information(self, "Update", f"SimVault ist aktuell (Version {info['aktuell']}).")
+
+    def show_update(self):
+        import updater
+        from .widgets import open_url
+        info = self._update_info
+        if not info:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Update verfügbar")
+        box.setText(f"Version {info['neueste']} ist da (installiert: {info['aktuell']}).")
+        box.setInformativeText("Was sich geändert hat, steht unter „Details“. Einstellungen, Berichte, Backups "
+                               "und eigene Erweiterungen bleiben erhalten.")
+        box.setDetailedText(info["notizen"] or "Keine Beschreibung.")
+        install = box.addButton("Jetzt aktualisieren" if updater.can_self_update() else "Herunterladen",
+                                QMessageBox.AcceptRole)
+        page = box.addButton("Release-Seite öffnen", QMessageBox.ActionRole)
+        box.addButton("Später", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is page:
+            open_url(info["url"])
+        elif box.clickedButton() is install:
+            import core
+            self.state.runner.start(lambda progress, should_stop: core.download_update(info, progress, should_stop),
+                                    on_done=self._update_downloaded,
+                                    on_error=lambda m: QMessageBox.warning(self, "Update", m))
+
+    def _update_downloaded(self, zip_path):
+        import core
+        from .widgets import open_path
+        if not zip_path:
+            return
+        try:
+            swapping = core.install_update(zip_path)
+        except OSError as e:
+            QMessageBox.warning(self, "Update", f"Automatisch ging es nicht ({e}).\nDas ZIP liegt hier:\n{zip_path}")
+            swapping = False
+        if swapping:
+            QMessageBox.information(self, "Update", "SimVault wird jetzt beendet, aktualisiert und neu gestartet.")
+            QTimer.singleShot(0, self._quit_for_update)
+        else:
+            QMessageBox.information(self, "Update", "Das Update wurde heruntergeladen:\n" + zip_path +
+                                    "\n\nSimVault beenden, das ZIP entpacken und den Inhalt über den alten "
+                                    "Programmordner kopieren.")
+            open_path(os.path.dirname(zip_path))
+
+    def _quit_for_update(self):
+        from PySide6.QtWidgets import QApplication
+        self.state.runner.stop()
+        QApplication.instance().quit()
 
     def go_to(self, name):
         for i, (page_name, _page) in enumerate(self.pages):

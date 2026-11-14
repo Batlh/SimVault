@@ -36,6 +36,11 @@ DEFAULT_CONFIG = {
     "temp_folder": "",          # Temp-Ordner fürs kurze Entpacken (leer = System-Temp, z. B. auf D: legen)
     "backup_folder": "./backups",
     "backup_mode": "full",      # full, delta, selective
+    "backup_cleanup": {         # alte Backups nach jedem neuen Backup automatisch aufräumen
+        "enabled": False,
+        "keep_last": 10,        # so viele Voll-Backups je Ordner behalten (0 = egal)
+        "max_age_days": 30,     # ältere löschen (0 = egal); das neueste Voll-Backup bleibt immer
+    },
     "report_folder": "./reports",
     "report_formats": ["html", "csv", "json", "md"],
     "database": {
@@ -52,6 +57,9 @@ DEFAULT_CONFIG = {
     "branding": {
         "app_name": "SimVault",
         "logo_path": "",
+    },
+    "updates": {
+        "check_on_start": True,  # beim Programmstart auf GitHub nach einer neueren Version schauen
     },
     "language": "en",           # future: i18n support
 }

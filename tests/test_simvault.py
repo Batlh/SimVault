@@ -1057,6 +1057,159 @@ class RepairTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(backup_dir, "saves", "Slot_00000001.save")))
 
 
+class BackupRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.mods = os.path.join(self.tmp, "Mods")
+        self.backups = os.path.join(self.tmp, "backups")
+        os.makedirs(os.path.join(self.mods, "CAS"))
+        self._write("CAS/a.package", "A1")
+        self._write("b.package", "B1")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _write(self, rel, text):
+        with open(os.path.join(self.mods, rel), "w") as f:
+            f.write(text)
+
+    def _read(self, rel):
+        with open(os.path.join(self.mods, rel)) as f:
+            return f.read()
+
+    def _named(self, kind):
+        import backup_manager
+        return [b["name"] for b in backup_manager.list_backups(self.backups) if b["art"] == kind]
+
+    def test_full_restore_modes(self):
+        import backup_manager as bm
+        name = os.path.basename(bm.full_zip_backup(self.mods, self.backups))
+        self._write("b.package", "B2")                       # geändert
+        os.remove(os.path.join(self.mods, "CAS", "a.package"))   # gelöscht
+        self._write("neu.package", "N")                      # dazugekommen
+        targets = {"mods": self.mods}
+        out = bm.restore_backup(self.backups, name, targets, overwrite=False)
+        self.assertEqual((out["wiederhergestellt"], out["uebersprungen"]), (1, 1))
+        self.assertEqual((self._read("CAS/a.package"), self._read("b.package")), ("A1", "B2"))
+        out = bm.restore_backup(self.backups, name, targets, overwrite=True, exact=True)
+        self.assertEqual(self._read("b.package"), "B1")
+        self.assertFalse(os.path.exists(os.path.join(self.mods, "neu.package")))
+        self.assertTrue(os.path.isfile(os.path.join(out["beiseite"], "neu.package")))     # verschoben, nicht gelöscht
+
+    def test_delta_restores_full_plus_deltas(self):
+        import time
+        import backup_manager as bm
+        bm.delta_backup(self.mods, self.backups)             # Ausgangsstand für die Hashes
+        shutil.rmtree(os.path.join(self.backups, self._named("delta")[0]))
+        os.makedirs(self.backups, exist_ok=True)
+        full = bm.full_zip_backup(self.mods, self.backups)
+        time.sleep(1.1)
+        self._write("b.package", "B2")
+        bm.delta_backup(self.mods, self.backups)
+        time.sleep(1.1)
+        self._write("c.package", "C3")
+        last = os.path.basename(bm.delta_backup(self.mods, self.backups))
+        for rel in ("b.package", "c.package", "CAS/a.package"):
+            os.remove(os.path.join(self.mods, rel))
+        out = bm.restore_backup(self.backups, last, {"mods": self.mods})
+        self.assertEqual(out["kette"][0], os.path.basename(full))
+        self.assertEqual(len(out["kette"]), 3)
+        self.assertEqual((self._read("CAS/a.package"), self._read("b.package"), self._read("c.package")),
+                         ("A1", "B2", "C3"))
+
+    def test_zip_cannot_write_outside_target(self):
+        import zipfile
+        import backup_manager as bm
+        os.makedirs(self.backups)
+        with zipfile.ZipFile(os.path.join(self.backups, "Mods_backup_20260101_000000.zip"), "w") as z:
+            z.writestr("../draussen.txt", "x")
+            z.writestr("ok.package", "y")
+        out = bm.restore_backup(self.backups, "Mods_backup_20260101_000000.zip", {"mods": self.mods})
+        self.assertEqual(out["wiederhergestellt"], 1)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "draussen.txt")))
+
+    def test_cleanup_rules(self):
+        import zipfile
+        from datetime import datetime
+        import backup_manager as bm
+        os.makedirs(self.backups)
+
+        def full(stamp):
+            with zipfile.ZipFile(os.path.join(self.backups, f"Mods_backup_{stamp}.zip"), "w") as z:
+                z.writestr("a", "a")
+
+        for stamp in ("20260101_100000", "20260601_100000", "20261101_100000", "20261110_100000"):
+            full(stamp)
+        os.makedirs(os.path.join(self.backups, "Mods_delta_20260105_100000"))    # hängt am Januar-Backup
+        os.makedirs(os.path.join(self.backups, "Mods_delta_20261112_100000"))
+        open(os.path.join(self.backups, "notizen.txt"), "w").close()             # fremde Datei bleibt unberührt
+        now = datetime(2026, 11, 14)
+        doomed = {b["name"] for b in bm.plan_cleanup(self.backups, keep_last=10, max_age_days=30, now=now)}
+        self.assertEqual(doomed, {"Mods_backup_20260101_100000.zip", "Mods_backup_20260601_100000.zip",
+                                  "Mods_delta_20260105_100000"})
+        doomed = {b["name"] for b in bm.plan_cleanup(self.backups, keep_last=1, max_age_days=0, now=now)}
+        self.assertNotIn("Mods_backup_20261110_100000.zip", doomed)              # das neueste bleibt immer
+        self.assertIn("Mods_backup_20261101_100000.zip", doomed)
+        removed, _freed = bm.cleanup_backups(self.backups, keep_last=1, max_age_days=0)
+        self.assertEqual(sorted(os.listdir(self.backups)),
+                         ["Mods_backup_20261110_100000.zip", "Mods_delta_20261112_100000", "notizen.txt"])
+        self.assertEqual(len(removed), 4)
+
+
+class UpdaterTests(unittest.TestCase):
+    def test_version_compare(self):
+        import updater
+        self.assertTrue(updater.is_newer("v0.6.1", "0.6.0"))
+        self.assertTrue(updater.is_newer("1.0", "0.9.9"))
+        self.assertFalse(updater.is_newer("v0.6.0", "0.6.0"))
+        self.assertFalse(updater.is_newer("v0.6", "0.6.0"))
+        self.assertFalse(updater.is_newer("v0.5.9", "0.6.0"))
+        self.assertFalse(updater.is_newer("", "0.6.0"))
+
+    def test_check_download_and_swap_script(self):
+        import io
+        import zipfile
+        import updater
+        tmp = tempfile.mkdtemp()
+        try:
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w") as z:
+                z.writestr("SimVault/SimVault.exe", "exe")
+                z.writestr("SimVault/_internal/lib.dll", "dll")
+            data = payload.getvalue()
+            release = {"tag_name": "v99.0.0", "body": "### Neu\n- alles", "html_url": "https://example.invalid/r",
+                       "assets": [{"name": "SimVault-Windows.zip", "browser_download_url": "https://example.invalid/z",
+                                   "size": len(data)}]}
+            info = updater.check(fetch=lambda: release)
+            self.assertTrue(info["neuer"])
+            self.assertEqual((info["neueste"], info["groesse"]), ("99.0.0", len(data)))
+
+            class Response(io.BytesIO):
+                headers = {"Content-Length": str(len(data))}
+
+            original = updater._get
+            updater._get = lambda url, timeout: Response(data)
+            try:
+                path = updater.download(info, os.path.join(tmp, "updates"))
+                self.assertTrue(zipfile.is_zipfile(path))
+                updater._get = lambda url, timeout: Response(data[:50])       # abgebrochener Download
+                with self.assertRaises(OSError):
+                    updater.download(info, os.path.join(tmp, "updates2"))
+                self.assertEqual(os.listdir(os.path.join(tmp, "updates2")), [])
+            finally:
+                updater._get = original
+            new_dir = updater.extract(path, os.path.join(tmp, "entpackt"))
+            self.assertTrue(os.path.isfile(os.path.join(new_dir, "SimVault.exe")))
+            script = updater.write_swap_script(new_dir, r"C:\Programme\SimVault", 4711, os.path.join(tmp, "u.bat"))
+            with open(script, encoding="utf-8") as f:
+                text = f.read()
+            self.assertIn('PID eq 4711', text)
+            self.assertIn(f'robocopy "{new_dir}" "C:\\Programme\\SimVault" /E', text)
+            self.assertFalse(updater.can_self_update())          # aus dem Quellcode gestartet: kein Selbst-Update
+        finally:
+            shutil.rmtree(tmp)
+
+
 class SourceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -1188,6 +1341,15 @@ class GuiSmokeTests(unittest.TestCase):
             repair_page = dict(window.pages)["Reparatur"]
             repair_page._checked(core.check_health(window.state.cfg, deep=True), True)
             self.assertGreater(repair_page.proxy.rowCount(), 0)          # Kaputt.package, Leer.package …
+            backup_page = dict(window.pages)["Backup"]
+            core.backup(window.state.cfg, "saves", "full")
+            backup_page.refresh()
+            self.assertEqual(backup_page.model.rowCount(), 1)
+            # Custom Branding: eigener Name erscheint in Fenster und Seitenleiste
+            raw = dict(window.state.raw, branding={"app_name": "MeinVault", "logo_path": ""})
+            window.state.save_config(raw)
+            self.assertEqual(window.title.text(), "MeinVault")
+            self.assertTrue(window.windowTitle().startswith("MeinVault"))
             # Relative Ordner liegen neben der config.json
             self.assertEqual(window.state.cfg["report_folder"], os.path.join(tmp, "reports"))
             window.close()

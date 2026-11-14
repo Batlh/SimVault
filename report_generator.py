@@ -60,7 +60,8 @@ def _row_dict(r):
 
 def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
                     db_path="simvault_data.db", formats=("html", "csv", "json", "md"),
-                    app_name="SimVault", missing=None, missing_info=None, found=None, conflicts=None):
+                    app_name="SimVault", missing=None, missing_info=None, found=None, conflicts=None,
+                    logo_path=None):
     """Schreibt die Berichte und gibt die Liste der erzeugten Dateien zurück."""
     os.makedirs(output_dir, exist_ok=True)
     households = []
@@ -106,7 +107,7 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
     base = os.path.join(output_dir, f"report_{stamp}")
     if "html" in formats:
         written.append(_write_html(base + ".html", app_name, summary, issues, rows, broken_names, missing,
-                                   households, found, found_at))
+                                   households, found, found_at, logo=_logo_tag(logo_path)))
     if "csv" in formats:
         written.append(_write_csv(base + ".csv", data_rows))
         if missing:
@@ -287,12 +288,29 @@ def _linkify(text):
     return "".join(out)
 
 
+def _logo_tag(logo_path):
+    """Eigenes Logo (Custom Branding) als eingebettetes Bild – der Bericht bleibt eine einzelne Datei."""
+    if not logo_path or not os.path.isfile(logo_path):
+        return ""
+    kinds = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".gif": "gif", ".svg": "svg+xml", ".webp": "webp"}
+    kind = kinds.get(os.path.splitext(logo_path)[1].lower())
+    try:
+        if not kind or os.path.getsize(logo_path) > 2 * 1024 * 1024:
+            return ""
+        import base64
+        with open(logo_path, "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+    except OSError:
+        return ""
+    return f"<img src='data:image/{kind};base64,{data}' alt='' style='height:44px;vertical-align:middle;margin-right:12px'>"
+
+
 def _write_html(path, app_name, summary, issues, rows, broken_names, missing=None, households=(),
-                found=None, found_at=None):
+                found=None, found_at=None, logo=""):
     e = escape
     out = [f"<!DOCTYPE html><html lang='de'><head><meta charset='utf-8'><title>{e(app_name)} Bericht</title>",
            f"<style>{_CSS}</style></head><body><div class='wrap'>",
-           f"<h1>{e(app_name)} – Bericht</h1>",
+           f"<h1>{logo}{e(app_name)} – Bericht</h1>",
            f"<div class='meta'>{e(summary['erstellt'].replace('T', ' '))} · Mods-Ordner: {e(summary['mods_ordner'])}<br>"
            f"Spielstände: {e(', '.join(summary['spielstaende']) or '—')}</div>",
            "<div class='cards'>",

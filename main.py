@@ -126,7 +126,8 @@ def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_i
                             output_dir=cfg["report_folder"],
                             db_path=cfg["database"].get("sqlite_path"),
                             formats=cfg["report_formats"],
-                            app_name=cfg["branding"].get("app_name", "SimVault"))
+                            app_name=cfg["branding"].get("app_name", "SimVault"),
+                            logo_path=cfg["branding"].get("logo_path"))
     print("\nBerichte:")
     for f in files:
         print(f"  {os.path.abspath(f)}")
@@ -426,13 +427,75 @@ def cmd_repair(cfg, args):
 
 
 def cmd_backup(cfg, args):
-    from backup_manager import backup_manager
+    import core
+    if args.target == "list":
+        backups = core.list_backups(cfg)
+        if not backups:
+            print(f"Keine Backups in {cfg['backup_folder']}")
+        for b in backups:
+            print(f"  {b['zeit']:%d.%m.%Y %H:%M}  {b['art_name']:22} {b['groesse'] / 1048576:8.1f} MB  {b['name']}")
+        return 0
+    if args.target == "restore":
+        if not args.name:
+            print('Welches Backup? Namen aus "py -3 main.py backup list" angeben.')
+            return 1
+        try:
+            out = core.restore_backup(cfg, args.name, overwrite=not args.nur_fehlendes, exact=args.genau,
+                                      progress=_progress)
+        except ValueError as e:
+            print(e)
+            return 1
+        if len(out["kette"]) > 1:
+            print("Eingespielt in dieser Reihenfolge: " + " → ".join(out["kette"]))
+        print(f"{out['wiederhergestellt']} Datei(en) wiederhergestellt nach {', '.join(out['ziele'])}"
+              + (f", {out['uebersprungen']} vorhandene nicht angefasst" if out["uebersprungen"] else ""))
+        if out["beiseite"]:
+            print(f"{out['verschoben']} Datei(en), die das Backup nicht kennt, liegen jetzt in {out['beiseite']}")
+        return 0
+    if args.target == "cleanup":
+        doomed = core.cleanup_backups(cfg, dry_run=True)
+        rules = cfg.get("backup_cleanup") or {}
+        print(f"Regeln: höchstens {rules.get('keep_last', 10)} Voll-Backups je Ordner, "
+              f"nichts älter als {rules.get('max_age_days', 30)} Tage; das neueste Voll-Backup bleibt immer.")
+        if not doomed:
+            print("Nichts aufzuräumen.")
+            return 0
+        for b in doomed:
+            print(f"  {b['zeit']:%d.%m.%Y %H:%M}  {b['art_name']:22} {b['groesse'] / 1048576:8.1f} MB  {b['name']}")
+        if not args.ausfuehren:
+            print(f"\n{len(doomed)} Backup(s) würden gelöscht – ausführen mit: py -3 main.py backup cleanup --ausfuehren")
+            return 0
+        removed, freed = core.cleanup_backups(cfg)
+        print(f"\n{len(removed)} Backup(s) gelöscht, {freed / 1048576:.1f} MB frei.")
+        return 0
     source = cfg["mods_folder"] if args.target == "mods" else cfg["savegames_folder"]
     if not _check_folder(source, "Quellordner"):
         return 1
     mode = args.mode or cfg.get("backup_mode", "full")
-    result = backup_manager(mode, source, cfg["backup_folder"], file_list=args.files)
+    result = core.backup(cfg, args.target, mode, file_list=args.files)
     print(f"Backup ({mode}) erstellt: {os.path.abspath(result)}")
+    return 0
+
+
+def cmd_update(cfg, args):
+    """Prüft auf GitHub, ob es eine neuere Version gibt; --laden lädt das ZIP herunter."""
+    import core
+    try:
+        info = core.check_update()
+    except (OSError, ValueError) as e:
+        print(f"GitHub ist gerade nicht erreichbar: {e}")
+        return 1
+    print(f"Installiert: {info['aktuell']}   Neuestes Release: {info['neueste'] or '–'}")
+    if not info["neuer"]:
+        print("SimVault ist aktuell.")
+        return 0
+    print(f"\nNeue Version {info['neueste']}: {info['url']}\n")
+    print(info["notizen"].strip()[:3000])
+    if args.laden:
+        path = core.download_update(info, progress=_progress)
+        print(f"\nHeruntergeladen: {path}\nEntpacken und den Inhalt über den alten Programmordner kopieren.")
+    else:
+        print('\nHerunterladen: py -3 main.py update --laden   (aus dem Quellcode aktualisierst du mit "git pull")')
     return 0
 
 
@@ -532,8 +595,13 @@ def build_parser():
     s = sub.add_parser("scan", help="nur den Mods-Ordner prüfen")
     s.set_defaults(func=cmd_scan)
 
-    b = sub.add_parser("backup", help="Backup von Mods oder Spielständen")
-    b.add_argument("target", choices=["mods", "saves"])
+    b = sub.add_parser("backup", help="Backup von Mods oder Spielständen; list / restore NAME / cleanup")
+    b.add_argument("target", choices=["mods", "saves", "list", "restore", "cleanup"])
+    b.add_argument("name", nargs="?", help="bei restore: Name des Backups (siehe backup list)")
+    b.add_argument("--nur-fehlendes", action="store_true", help="restore: vorhandene Dateien nicht überschreiben")
+    b.add_argument("--genau", action="store_true",
+                   help="restore: Ordner genau auf den Backup-Stand bringen (Übriges wird beiseitegelegt)")
+    b.add_argument("--ausfuehren", action="store_true", help="cleanup: wirklich löschen (sonst nur anzeigen)")
     b.add_argument("--mode", choices=["full", "delta", "selective"])
     b.add_argument("--files", nargs="+", help="Dateien (relativ zum Ordner) für selective")
     b.set_defaults(func=cmd_backup)
@@ -568,6 +636,10 @@ def build_parser():
     rp.add_argument("--gruendlich", action="store_true", help="jede Ressource entpacken (findet mehr, dauert länger)")
     rp.add_argument("--ausfuehren", action="store_true", help="reparieren, was sich sicher reparieren lässt")
     rp.set_defaults(func=cmd_repair)
+
+    u = sub.add_parser("update", help="nach einer neueren SimVault-Version suchen")
+    u.add_argument("--laden", action="store_true", help="das neue Release (ZIP) herunterladen")
+    u.set_defaults(func=cmd_update)
 
     st = sub.add_parser("setup", help="einrichten: Ordner, Entpacker für RAR/7z, Laufwerke")
     st.set_defaults(func=cmd_setup)

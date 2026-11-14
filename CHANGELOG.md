@@ -13,6 +13,11 @@ zusammen mit der Liste aller Commits seit dem letzten Release.
 - Spielordner wird automatisch gefunden (EA App/Origin, Steam, Epic, alle Laufwerke) und zur Auswahl vorgeschlagen: beim ersten Start, in den Einstellungen („Automatisch suchen“) und in `setup`.
 - Reparatur: prüft CC und Spielstände; repariert falsch benannte Archive, Pakete mit einzelnen kaputten Ressourcen und Spielstände (letzte intakte Fassung des Spiels). Originale werden vorher gesichert. Neue Seite „Reparatur“ und Befehl `repair`.
 
+- Backups wiederherstellen: Voll-Backup, Delta (letztes Voll-Backup plus alle Deltas bis zum gewählten), Auswahl und die Originale aus Reparatur/Konflikt-Aufräumen – wahlweise ersetzen, nur Fehlendes ergänzen oder genau auf Backup-Stand bringen (Übriges wird beiseitegelegt). Befehle `backup list` und `backup restore`.
+- Alte Backups aufräumen nach Regel (Anzahl Voll-Backups je Ordner, Alter in Tagen; das neueste bleibt immer) – auf Knopfdruck oder automatisch nach jedem Backup. Befehl `backup cleanup`.
+- Auto-Updater: sucht beim Start auf GitHub nach einer neuen Version, zeigt den Changelog, lädt herunter und tauscht das Programm nach dem Beenden aus. Befehl `update`.
+- Eigenes Branding: Programmname und Logo für Fenster und Berichte.
+
 ### Bugfixes
 - Kommandozeile stürzte unter Windows ab, wenn die Ausgabe umgeleitet wurde (Zeichen „→“).
 - Test für Suchorte schlug auf Rechnern mit weiteren Laufwerken fehl.
