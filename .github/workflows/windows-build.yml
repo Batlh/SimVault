@@ -6,6 +6,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version für ein Release, z. B. v0.5.0 (leer = nur bauen)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -43,8 +48,11 @@ jobs:
           path: SimVault-Windows.zip
 
       - name: Release erstellen
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          name: SimVault ${{ inputs.version || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: SimVault-Windows.zip
           generate_release_notes: true
