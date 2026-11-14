@@ -461,8 +461,40 @@ class FinderTests(unittest.TestCase):
             self.assertEqual(sorted(d["datei"] for d in fs["dateien"]), ["Haare_von_Ivka.package", "Sofa.package"])
             self.assertEqual(fs["nicht_lesbar"], [os.path.join(fund, "Paket.rar")])
 
+            # gleiche Datei an zwei Orten wird zusammengefasst; --ohne lässt Funde aus
+            os.makedirs(os.path.join(fund, "kopie"))
+            shutil.copy(os.path.join(fund, "alt", "Haare_von_Ivka.package"), os.path.join(fund, "kopie"))
+            parts = [{"id": f"0x{MISSING_CAS:016X}", "art": "Haare (Steckplatz 2)", "verwendet_von": ["Bella Grusel"]}]
+            hits, _ = cc_finder.search([fund], {MISSING_CAS})
+            grouped, n = cc_finder.summarize(hits, parts)
+            self.assertEqual((len(grouped), n, len(grouped[0]["weitere_fundorte"])), (1, 1, 1))
+            self.assertEqual(grouped[0]["verwendet_von"], ["Bella Grusel"])
+            other = os.path.join(tmp, "Mods2")
+            os.makedirs(other)
+            self.assertEqual(cc_finder.restore(grouped, other, exclude=["ivka"]), [])
+
             # erneutes Zurückholen überschreibt nichts
             self.assertEqual(cc_finder.restore([{"datei": "Sofa.package", "pfad": "egal", "archiv_eintrag": None}],
                                                mods), [])
+        finally:
+            shutil.rmtree(tmp)
+
+
+class SearchLocationTests(unittest.TestCase):
+    def test_locations_and_system_dirs(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            a = os.path.join(tmp, "A")
+            os.makedirs(os.path.join(a, "Unterordner"))
+            os.makedirs(os.path.join(a, "Windows"))
+            dbpf.write_package(os.path.join(a, "Windows", "x.package"), [(dbpf.TYPE_CASP, 0, MISSING_CAS, b"")])
+            # verschachtelte Ordner werden nur einmal durchsucht, fehlende ignoriert
+            locs = cc_finder.search_locations({}, [a, os.path.join(a, "Unterordner"), os.path.join(tmp, "fehlt")])
+            self.assertEqual(locs, [a])
+            # Systemordner (hier "Windows") werden übersprungen
+            hits, _ = cc_finder.search(locs, {MISSING_CAS})
+            self.assertEqual(hits, [])
+            if os.name != "nt":
+                self.assertEqual(cc_finder.list_drives(), [])
         finally:
             shutil.rmtree(tmp)

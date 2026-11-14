@@ -7,6 +7,7 @@
 #   python main.py scan                 nur Mods-Ordner prüfen (ohne Spielstand)
 #   python main.py find                 fehlende CC auf dem PC suchen (Downloads, alte Mods-Ordner …)
 #   python main.py find "D:\Alte Mods" --restore   … in bestimmten Ordnern, Funde zurückholen
+#   python main.py find --ganzer-pc     zusätzlich das komplette Laufwerk C: durchsuchen
 #   python main.py backup mods          Backup des Mods-Ordners (Modus aus config.json)
 #   python main.py backup saves --mode delta
 #   python main.py config               zeigt die verwendeten Pfade
@@ -159,8 +160,8 @@ def cmd_find(cfg, args):
     import cc_finder
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
-    folders = args.folders or cfg.get("search_folders") or cc_finder.default_search_folders(cfg)
-    folders = [f for f in folders if os.path.isdir(f)]
+    folders = cc_finder.search_locations(cfg, args.folders, drives=not args.ohne_laufwerke,
+                                         whole_pc=args.ganzer_pc)
     if not folders:
         print("Keine Suchordner gefunden. Ordner angeben: python main.py find \"D:\\Alte Mods\"")
         return 1
@@ -184,7 +185,10 @@ def cmd_find(cfg, args):
     print(f"\nGefunden: {n_found} von {len(parts)} fehlenden Teilen in {len(found)} Datei(en).")
     for item in found[:20]:
         where = f"{item['pfad']} → {item['archiv_eintrag']}" if item["archiv_eintrag"] else item["pfad"]
-        print(f"  {item['anzahl_ids']:>3} Teile  {where}")
+        more = f" (+{len(item['weitere_fundorte'])} weitere Fundorte)" if item["weitere_fundorte"] else ""
+        print(f"  {item['anzahl_ids']:>3} Teile ({', '.join(item['arten'])})  {where}{more}")
+        if item["verwendet_von"]:
+            print(f"        für: {', '.join(item['verwendet_von'][:3])}")
     if len(found) > 20:
         print(f"  … {len(found) - 20} weitere im Bericht")
     if unreadable:
@@ -195,11 +199,12 @@ def cmd_find(cfg, args):
 
     if found and args.restore:
         import cc_finder as cf
-        created = cf.restore(found, cfg["mods_folder"])
+        created = cf.restore(found, cfg["mods_folder"], exclude=args.ohne or [])
         print(f"\n{len(created)} Datei(en) zurückgeholt nach "
               f"{os.path.join(cfg['mods_folder'], cf.RESTORE_SUBFOLDER)}")
     elif found:
-        print('\nZum Zurückholen in den Mods-Ordner: python main.py find --restore')
+        print('\nZum Zurückholen in den Mods-Ordner: python main.py find --restore '
+              '(einzelne Funde auslassen: --ohne WickedWhims)')
 
     _write_report(cfg, mod_scan, None, saves, missing, info,
                   found={"dateien": found, "ordner": folders, "nicht_lesbar": unreadable,
@@ -241,9 +246,17 @@ def build_parser():
     b.set_defaults(func=cmd_backup)
 
     f = sub.add_parser("find", help="fehlende CC auf dem PC suchen (Ordner und ZIP-Archive)")
-    f.add_argument("folders", nargs="*", help="Suchordner (Standard: Downloads, alte Mods-Ordner, Mod-Manager …)")
+    f.add_argument("folders", nargs="*",
+                   help="Suchordner (Standard: Downloads, Desktop, alte Mods-Ordner, Mod-Manager … und alle "
+                        "weiteren Laufwerke)")
     f.add_argument("--restore", action="store_true",
                    help="gefundene Pakete nach Mods/SimVault_wiederhergestellt kopieren")
+    f.add_argument("--ganzer-pc", action="store_true",
+                   help="auch das komplette Systemlaufwerk C: durchsuchen (dauert länger)")
+    f.add_argument("--ohne-laufwerke", action="store_true",
+                   help="nur die Ordner durchsuchen, keine weiteren Laufwerke (D:, E: …)")
+    f.add_argument("--ohne", nargs="+", metavar="TEXT",
+                   help="beim Zurückholen Funde auslassen, deren Datei/Fundort diesen Text enthält")
     f.set_defaults(func=cmd_find)
 
     c = sub.add_parser("config", help="verwendete Pfade anzeigen")

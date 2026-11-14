@@ -327,11 +327,15 @@ def _write_html(path, app_name, summary, issues, rows, broken_names, missing=Non
         out.append(f"<h2>Auf deinem PC gefunden</h2><div class='meta'>{found['gefunden']} von {found['gesucht']} "
                    "fehlenden Teilen gefunden. Durchsucht: " + e(", ".join(found["ordner"])) + "</div>")
         if found["dateien"]:
-            out.append("<table><tr><th>Datei</th><th>Teile</th><th>Art</th><th>Fundort</th></tr>")
+            out.append("<table><tr><th>Datei</th><th>Teile</th><th>Art</th><th>Für</th><th>Fundort</th></tr>")
             for item in found["dateien"]:
                 where = e(item["pfad"]) + (f" → {e(item['archiv_eintrag'])}" if item["archiv_eintrag"] else "")
+                more = item.get("weitere_fundorte") or []
+                if more:
+                    where += f"<br><span class='meta'>auch in: {'<br>'.join(e(m) for m in more)}</span>"
                 out.append(f"<tr><td>{e(item['datei'])}</td><td>{item['anzahl_ids']}</td>"
-                           f"<td>{e(', '.join(item['arten']))}</td><td>{where}</td></tr>")
+                           f"<td>{e(', '.join(item['arten']))}</td>"
+                           f"<td>{e(', '.join(item.get('verwendet_von', [])[:5]))}</td><td>{where}</td></tr>")
             out.append("</table><p>Zurückholen: <code>python main.py find --restore</code> "
                        "(kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts)</p>")
         if found["nicht_lesbar"]:

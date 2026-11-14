@@ -6,6 +6,9 @@
 # Gefundene Pakete können optional in den Mods-Ordner zurückgeholt werden
 # (Unterordner "SimVault_wiederhergestellt", es wird nichts überschrieben).
 #
+# Laufwerke: Standardmäßig werden zusätzlich alle weiteren Laufwerke (D:, E:, USB-Sticks …)
+# komplett durchsucht, Systemordner ausgenommen. Mit "ganzer PC" auch das Systemlaufwerk C:.
+#
 # Grenzen: .rar- und .7z-Archive kann Python ohne Zusatzprogramme nicht öffnen – sie werden
 # aufgelistet, damit man sie selbst entpacken kann.
 
@@ -20,7 +23,36 @@ log = logging.getLogger(__name__)
 
 RESTORE_SUBFOLDER = "SimVault_wiederhergestellt"
 UNREADABLE_ARCHIVES = (".rar", ".7z")
-SKIP_DIRS = {"$recycle.bin", "system volume information", "node_modules", ".git", "__pycache__"}
+SKIP_DIRS = {"$recycle.bin", "system volume information", "node_modules", ".git", "__pycache__",
+             # Systemordner beim Durchsuchen ganzer Laufwerke
+             "windows", "program files", "program files (x86)", "programdata", "$windows.~bt", "$windows.~ws",
+             "$winreagent", "recovery", "perflogs", "windowsapps", "msocache", "appdata"}
+
+DRIVE_REMOVABLE = 2
+DRIVE_FIXED = 3
+
+
+def list_drives(include_system=False):
+    """Alle lokalen Festplatten und USB-Laufwerke (nur Windows), z. B. ["D:\\", "E:\\"].
+    Das Systemlaufwerk (meist C:) nur mit include_system=True."""
+    if os.name != "nt":
+        return []
+    import ctypes
+    import string
+    kernel32 = ctypes.windll.kernel32
+    system = os.environ.get("SystemDrive", "C:").upper().rstrip("\\") + "\\"
+    mask = kernel32.GetLogicalDrives()
+    drives = []
+    for i, letter in enumerate(string.ascii_uppercase):
+        if not mask & (1 << i):
+            continue
+        root = f"{letter}:\\"
+        if kernel32.GetDriveTypeW(root) not in (DRIVE_FIXED, DRIVE_REMOVABLE):
+            continue  # Netzlaufwerke, CD/DVD usw. auslassen
+        if root.upper() == system and not include_system:
+            continue
+        drives.append(root)
+    return drives
 
 
 def default_search_folders(cfg):
@@ -48,6 +80,23 @@ def default_search_folders(cfg):
     return result
 
 
+def search_locations(cfg, folders=None, drives=True, whole_pc=False):
+    """Ordner für die Suche: angegebene Ordner oder die Standard-Orte, plus Laufwerke."""
+    locations = list(folders or cfg.get("search_folders") or default_search_folders(cfg))
+    if drives or whole_pc:
+        locations += list_drives(include_system=whole_pc)
+    seen, result = set(), []
+    for path in locations:
+        key = os.path.normcase(os.path.abspath(path))
+        if os.path.isdir(path) and key not in seen:
+            seen.add(key)
+            result.append(path)
+    # Ordner weglassen, die schon in einem durchsuchten Laufwerk/Ordner stecken
+    keys = [os.path.normcase(os.path.abspath(p)) for p in result]
+    return [p for p, k in zip(result, keys)
+            if not any(k != o and k.startswith(o.rstrip("\\/") + os.sep) for o in keys)]
+
+
 def _ids_in_entries(entries, wanted):
     return {e.instance for e in entries if e.instance in wanted}
 
@@ -65,6 +114,8 @@ def search(folders, wanted, exclude=(), progress=None):
     excluded = {os.path.normcase(os.path.abspath(x)) for x in exclude if x}
     checked = 0
     for folder in folders:
+        if progress:
+            progress(f"durchsuche {folder}")
         for root, dirs, files in os.walk(folder):
             dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS
                        and os.path.normcase(os.path.abspath(os.path.join(root, d))) not in excluded]
@@ -112,31 +163,44 @@ def summarize(hits, parts):
     parts: Liste aus find_missing()["teile"]. Gibt Treffer (sortiert, IDs als Hex) und die Anzahl
     der Teile zurück, die gefunden wurden."""
     by_id = {int(p["id"], 16): p for p in parts}
-    result = []
+    grouped = {}  # gleiche Datei (Name + gefundene IDs) an mehreren Orten nur einmal aufführen
     found = set()
     for hit in hits:
         found |= hit["ids"]
-        arts = sorted({by_id[i]["art"].split(" (")[0] for i in hit["ids"] if i in by_id})
-        result.append({
-            "datei": os.path.basename(hit["archiv_eintrag"] or hit["pfad"]),
+        name = os.path.basename(hit["archiv_eintrag"] or hit["pfad"])
+        key = (name.lower(), frozenset(hit["ids"]))
+        where = f"{hit['pfad']} → {hit['archiv_eintrag']}" if hit["archiv_eintrag"] else hit["pfad"]
+        if key in grouped:
+            grouped[key]["weitere_fundorte"].append(where)
+            continue
+        users = sorted({u for i in hit["ids"] if i in by_id for u in by_id[i]["verwendet_von"]})
+        grouped[key] = {
+            "datei": name,
             "pfad": hit["pfad"],
             "archiv_eintrag": hit["archiv_eintrag"],
             "anzahl_ids": len(hit["ids"]),
             "ids": sorted(f"0x{i:016X}" for i in hit["ids"]),
-            "arten": arts,
+            "arten": sorted({by_id[i]["art"].split(" (")[0] for i in hit["ids"] if i in by_id}),
+            "verwendet_von": users,
             "groesse": hit["groesse"],
-        })
-    result.sort(key=lambda r: (-r["anzahl_ids"], r["datei"].lower()))
+            "weitere_fundorte": [],
+        }
+    result = sorted(grouped.values(), key=lambda r: (-r["anzahl_ids"], r["datei"].lower()))
     return result, len(found)
 
 
-def restore(found, mods_folder):
+def restore(found, mods_folder, exclude=()):
     """Kopiert gefundene Pakete nach <Mods>/SimVault_wiederhergestellt. Überschreibt nichts.
+    exclude: Textstücke – Funde, deren Datei oder Fundort eines davon enthält, werden übersprungen.
     Gibt die Liste der neu angelegten Dateien zurück."""
     target_dir = os.path.join(mods_folder, RESTORE_SUBFOLDER)
     os.makedirs(target_dir, exist_ok=True)
     created = []
+    patterns = [x.lower() for x in exclude if x]
     for item in found:
+        haystack = f"{item['pfad']} {item.get('archiv_eintrag') or ''}".lower()
+        if any(p in haystack for p in patterns):
+            continue
         target = os.path.join(target_dir, item["datei"])
         if os.path.exists(target):
             continue
