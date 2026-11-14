@@ -208,9 +208,10 @@ def cmd_find(cfg, args):
                                             max_archive_mb=cfg.get("max_archive_mb", 4096))
         found, n_found = cc_finder.summarize(hits, parts)
         restored = failed = None
+        skipped = []
         if found and args.restore and _backup_before_restore(cfg, args):
             restored, failed = cc_finder.restore(found, cfg["mods_folder"], exclude=args.ohne or [], tools=tools,
-                                                 work_dir=work_dir, progress=_progress)
+                                                 work_dir=work_dir, progress=_progress, skipped=skipped)
     for item in found:
         item.pop("temp_datei", None)  # Temp-Ordner ist jetzt gelöscht
 
@@ -225,12 +226,14 @@ def cmd_find(cfg, args):
         print(f"  … {len(found) - 20} weitere im Bericht")
     _print_unreadable(unreadable)
     if restored is not None:
-        _print_restored(cfg, restored, failed)
+        _print_restored(cfg, restored, failed, skipped)
     elif found:
         print('\nZurückholen ohne neue Suche: py -3 main.py restore   '
               '(einzelne Funde auslassen: --ohne WickedWhims)')
 
-    _write_report(cfg, mod_scan, None, saves, missing, info,
+    from savegame_analyzer import analyze_usage
+    usage = analyze_usage(mod_scan, saves, tray_folder=cfg.get("tray_folder"), progress=_progress)
+    _write_report(cfg, mod_scan, usage, saves, missing, info,
                   found={"dateien": found, "ordner": folders, "nicht_lesbar": unreadable,
                          "gefunden": n_found, "gesucht": len(parts)})
     return 0
@@ -247,10 +250,14 @@ def _print_unreadable(unreadable):
         print(f"  … {len(unreadable) - len(sims)} weitere ohne erkennbaren Sims-Bezug (siehe Bericht)")
 
 
-def _print_restored(cfg, restored, failed):
+def _print_restored(cfg, restored, failed, skipped=None):
     import cc_finder
     print(f"\n{len(restored)} Datei(en) zurückgeholt nach "
           f"{os.path.join(cfg['mods_folder'], cc_finder.RESTORE_SUBFOLDER)}")
+    if skipped:
+        print(f"{len(skipped)} Datei(en) nicht kopiert, damit nichts doppelt im Mods-Ordner landet:")
+        for name, reason in skipped[:10]:
+            print(f"  {name} – {reason}")
     for name, reason in (failed or [])[:10]:
         print(f"  nicht geklappt: {name} – {reason}")
     if restored:
@@ -309,10 +316,11 @@ def cmd_restore(cfg, args):
         return 1
     tools = archive_tools.tools_from_config(cfg)
     temp_base = cfg.get("temp_folder") or None
+    skipped = []
     with tempfile.TemporaryDirectory(prefix=cc_finder.TEMP_PREFIX, dir=temp_base) as work_dir:
         restored, failed = cc_finder.restore(found, cfg["mods_folder"], exclude=args.ohne or [], tools=tools,
-                                             work_dir=work_dir, progress=_progress)
-    _print_restored(cfg, restored, failed)
+                                             work_dir=work_dir, progress=_progress, skipped=skipped)
+    _print_restored(cfg, restored, failed, skipped)
     return 0
 
 

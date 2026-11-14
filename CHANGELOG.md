@@ -6,6 +6,11 @@ zusammen mit der Liste aller Commits seit dem letzten Release.
 
 ## [Unveröffentlicht]
 
+### Bugfixes
+- Wiederherstellen legt keine doppelte CC mehr an: Funde, deren Teile schon im Mods-Ordner sind oder von einer anderen Fund-Datei mitgebracht werden, werden übersprungen; bei Gleichstand gewinnt das kleinere Einzelpaket statt eines großen Sets.
+- „Könnte Sims-Inhalte enthalten“ ist nicht mehr so großzügig – z. B. Mass-Effect-Mods in einem Ordner „Mods“ landen nicht mehr in der Sims-Liste.
+- Nach einer Suche (`find`) steht im Bericht wieder bei jeder Mod, ob sie genutzt wird.
+
 ## [0.5.0] – 2026-11-14
 
 ### Neu

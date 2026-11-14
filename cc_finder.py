@@ -105,14 +105,19 @@ def _ids_in_entries(entries, wanted):
     return {e.instance for e in entries if e.instance in wanted}
 
 
-SIMS_HINTS = ("sims", "ts4", "s4", "mod", "cc", "package", "tray", "wicked", "mccc", "patreon", "tsr", "cas")
+# Ganze Wörter, die klar auf Sims hindeuten. Allgemeine Wörter wie "mod" oder "patreon"
+# gehören nicht dazu – sonst landen z. B. Mass-Effect-Mods in der Sims-Liste.
+SIMS_WORDS = {"sims", "sims4", "ts4", "s4", "cc", "package", "tray", "wickedwhims", "wicked", "mccc",
+              "tsr", "cas", "mcas", "simfileshare", "mts", "modthesims", "nraas", "lumpinou", "basemental"}
+SIMS_PREFIXES = ("sims4", "thesims", "ts4", "s4cc", "s4_", "wickedwhims")
 
 
 def looks_like_sims(path):
     """Grobe Einschätzung, ob ein (nicht lesbares) Archiv Sims-Inhalte enthalten könnte."""
     import re
-    words = re.split(r"[^a-z0-9]+", path.lower())
-    return any(w.startswith(h) or w.endswith(h) for w in words if w for h in SIMS_HINTS)
+    low = path.lower()
+    words = [w for w in re.split(r"[^a-z0-9]+", low) if w]
+    return any(w in SIMS_WORDS for w in words) or any(p in low for p in SIMS_PREFIXES)
 
 
 TEMP_PREFIX = "simvault_fund_"
@@ -399,18 +404,67 @@ def fetch(outer, entry, target, tools=None, work_dir=None):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def restore(found, mods_folder, exclude=(), tools=None, work_dir=None, progress=None):
+def plan_restore(found, installed_ids=(), exclude=()):
+    """Wählt aus den Funden möglichst wenige Dateien, die alle noch fehlenden Teile abdecken.
+    Teile, die schon im Mods-Ordner stecken, zählen nicht. Bei Gleichstand gewinnt die kleinere Datei
+    (einzelnes Paket statt großem Set). Gibt (auswahl, [(Datei, Grund)] übersprungen) zurück."""
+    patterns = [x.lower() for x in exclude if x]
+    installed = set(installed_ids)
+    candidates, skipped = [], []
+    for item in found:
+        haystack = f"{item['pfad']} {item.get('archiv_eintrag') or ''} {item['datei']}".lower()
+        if any(p in haystack for p in patterns):
+            skipped.append((item["datei"], "ausgelassen (--ohne)"))
+            continue
+        ids = {int(x, 16) if isinstance(x, str) else x for x in item.get("ids") or []}
+        if not ids:                        # alter Bericht ohne ID-Liste: nicht aussortieren
+            candidates.append((item, None))
+            continue
+        need = ids - installed
+        if not need:
+            skipped.append((item["datei"], "alle Teile sind schon im Mods-Ordner"))
+            continue
+        candidates.append((item, need))
+    chosen = [item for item, need in candidates if need is None]
+    rest = [(item, need) for item, need in candidates if need is not None]
+    covered = set()
+    while rest:
+        rest.sort(key=lambda c: (-len(c[1] - covered), c[0].get("groesse") or 0))
+        item, need = rest.pop(0)
+        if not need - covered:
+            skipped.append((item["datei"], "Teile kommen schon aus einer anderen Fund-Datei"))
+            for other, _n in rest:
+                skipped.append((other["datei"], "Teile kommen schon aus einer anderen Fund-Datei"))
+            break
+        chosen.append(item)
+        covered |= need
+    return chosen, skipped
+
+
+def installed_ids(mods_folder):
+    """Alle CC-IDs, die im Mods-Ordner schon vorhanden sind."""
+    from mod_folder_scanner import scan_mods_folder
+    ids = set()
+    for mod in scan_mods_folder(mods_folder).mods:
+        ids |= mod.match_ids
+    return ids
+
+
+def restore(found, mods_folder, exclude=(), tools=None, work_dir=None, progress=None, skipped=None):
     """Kopiert gefundene Pakete nach <Mods>/SimVault_wiederhergestellt. Überschreibt nichts.
     exclude: Textstücke – Funde, deren Datei oder Fundort eines davon enthält, werden übersprungen.
+    Funde, deren Teile schon installiert sind oder von einer anderen Fund-Datei mitgebracht werden,
+    werden nicht kopiert (landen in der Liste skipped, falls übergeben).
     Gibt (angelegt, fehlgeschlagen) zurück: Liste der neuen Dateien und [(Datei, Grund)]."""
     target_dir = os.path.join(mods_folder, RESTORE_SUBFOLDER)
     os.makedirs(target_dir, exist_ok=True)
     created, failed = [], []
-    patterns = [x.lower() for x in exclude if x]
-    for item in found:
-        haystack = f"{item['pfad']} {item.get('archiv_eintrag') or ''} {item['datei']}".lower()
-        if any(p in haystack for p in patterns):
-            continue
+    if progress:
+        progress("prüfe, was schon im Mods-Ordner ist")
+    chosen, left_out = plan_restore(found, installed_ids(mods_folder), exclude)
+    if skipped is not None:
+        skipped.extend(left_out)
+    for item in chosen:
         target = os.path.join(target_dir, item["datei"])
         if os.path.exists(target):
             continue

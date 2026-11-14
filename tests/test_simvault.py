@@ -741,6 +741,34 @@ import sources
 from sources import loader as source_loader
 
 
+class RestorePlanTests(unittest.TestCase):
+    def _item(self, name, ids, size):
+        return {"datei": name, "pfad": "D:\\" + name, "archiv_eintrag": None,
+                "ids": [hex(i) for i in ids], "groesse": size}
+
+    def test_no_duplicates_and_installed_skipped(self):
+        from cc_finder import plan_restore
+        a, b, c = 1 << 40, 2 << 40, 3 << 40
+        found = [self._item("Set.package", [a, b], 900), self._item("Wimpern.package", [a], 100),
+                 self._item("Schon_da.package", [c], 50)]
+        chosen, skipped = plan_restore(found, installed_ids={c})
+        self.assertEqual([i["datei"] for i in chosen], ["Set.package"])
+        self.assertEqual({n for n, _r in skipped}, {"Wimpern.package", "Schon_da.package"})
+
+    def test_smaller_file_wins_on_tie(self):
+        from cc_finder import plan_restore
+        a = 1 << 40
+        chosen, _ = plan_restore([self._item("Gross.package", [a], 900), self._item("Klein.package", [a], 10)])
+        self.assertEqual([i["datei"] for i in chosen], ["Klein.package"])
+
+    def test_sims_hint_not_too_broad(self):
+        from cc_finder import looks_like_sims
+        self.assertFalse(looks_like_sims(r"F:\games\Mods und setups Mass effect\ALOV.7z"))
+        self.assertFalse(looks_like_sims(r"E:\Download\Ocarina of time Patreon.rar"))
+        self.assertTrue(looks_like_sims(r"C:\Downloads\MCAS Full Set.7z"))
+        self.assertTrue(looks_like_sims(r"D:\Sims4 CC\Haare.zip"))
+
+
 class SourceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
