@@ -5,6 +5,16 @@
 # - Der Sims-4-Ordner wird automatisch gesucht (auch deutsche Installation "Die Sims 4"
 #   und Dokumente-Ordner in OneDrive).
 # - Fehlende Einträge in einer bestehenden config.json werden mit Standardwerten ergänzt.
+#
+# Standardwerte für:
+# - Sims-, Mods-, Savegames-, Tray- und Backup-Pfad
+# - Backup-Modus (full, delta, selective)
+# - Berichtformate (HTML, CSV, JSON, MD)
+# - Datenbank-Typ (sqlite, mysql)
+# Optional / geplant:
+# - Custom Branding (z.B. Logo, App-Name)
+# - Spracheinstellungen (future i18n Support)
+# - MySQL/PostgreSQL als Plugin für Fortgeschrittene
 
 import os
 import copy
@@ -22,14 +32,21 @@ DEFAULT_CONFIG = {
     "report_folder": "./reports",
     "report_formats": ["html", "csv", "json", "md"],
     "database": {
-        "type": "sqlite",       # sqlite, später evtl. mysql
+        "type": "sqlite",       # options: sqlite, mysql (future)
         "sqlite_path": "simvault_data.db",
+        "mysql": {
+            "enabled": False,
+            "host": "localhost",
+            "user": "root",
+            "password": "",
+            "database": "simvault",
+        },
     },
     "branding": {
         "app_name": "SimVault",
         "logo_path": "",
     },
-    "language": "de",
+    "language": "en",           # future: i18n support
 }
 
 

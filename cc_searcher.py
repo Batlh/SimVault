@@ -1,12 +1,50 @@
 # Modul: cc_searcher.py
-# Funktion: Erzeugt Suchlinks, um CC auf den bekannten Seiten wiederzufinden
-#           (z. B. für defekte Dateien oder um eine neuere Version zu suchen).
+# Funktion: Sucht nach fehlenden CC- oder Mod-Dateien online (TSR, CurseForge, ModTheSims etc.)
 #
-# Die Seiten werden bewusst nicht automatisch abgefragt: TSR, CurseForge, Patreon & Co.
-# blocken einfache Skript-Anfragen (Cloudflare) oder brauchen JavaScript/Login.
-# Ein Klick auf den Link im Report öffnet die Suche direkt im Browser.
+# Aktueller Stand:
+# - Erzeugt Suchlinks aus Dateinamen; ein Klick im Report öffnet die Suche im Browser.
+# - Die Seiten werden noch nicht automatisch abgefragt: TSR, CurseForge, Patreon & Co.
+#   blocken einfache Skript-Anfragen (Cloudflare) oder brauchen JavaScript/Login.
+#   Dafür ist die Advanced-Version unten geplant.
 #
-# Später möglich: echte Trefferlisten über einen Browser (Playwright) mit manuellem Login.
+# Aufgaben:
+# - Automatische Suche basierend auf Dateinamen oder CC-IDs
+# - Nutzung von Web Scraping (Requests + BeautifulSoup)
+# - Trefferlisten mit Links zur Suchanfrage sammeln
+# - Unterstützung fester Quellen:
+#   - The Sims Resource (TSR)
+#   - CurseForge
+#   - ModTheSims
+#   - Tumblr
+#   - Patreon
+#   - LoversLab
+#   - SexySims
+#   - NewSea
+#
+# Erweiterte Architektur (geplant):
+# - Feste Quellen werden als Core-Module direkt eingebunden (kein Plugin erforderlich für Haupt-Sites)
+# - Erweiterbare Plugin-Architektur für zusätzliche, benutzerdefinierte Quellen
+# - Modularer Aufbau:
+#   - cc_searcher/core_sites/ (alle großen Seiten wie TSR, CurseForge, MTS, etc.)
+#   - cc_searcher/plugins/ (zusätzliche Quellen als Plugins)
+#   - cc_searcher/login_manager.py (Login- und Session-Management inkl. 2FA Support)
+#   - cc_searcher/captcha_solver.py (Manuelle oder automatische Captcha-Behandlung)
+#
+# Zukünftige Erweiterungen (Advanced-Version geplant):
+# - Vollständiges HTML-Parsing für echte Trefferlisten (Titel, Bild, Downloadlink, Beschreibung)
+# - Headless Browser Support (Selenium/Playwright)
+# - Unterstützung für Login und Authentifizierung:
+#   - Sichtbares Login-Fenster
+#   - Benutzer loggt sich selbst ein (mit 2FA-Support)
+#   - Cookies werden automatisch gespeichert und **mit AES256 verschlüsselt**
+#   - Entschlüsselung nur zur Laufzeit im RAM (keine Klartext-Cookies auf Disk)
+# - Manuelle Captcha-Lösung: Fenster öffnet sich, Benutzer löst Captcha manuell
+# - (Optional: Captcha-Automatisierung via Services, falls gewünscht)
+# - Automatisiertes Download-Management
+#
+# Strukturvorschlag:
+# - Funktion: search_alternatives(missing_cc_list) → Gibt Trefferliste zurück
+#   (aktuell: {Name: {Seite: Such-URL}})
 
 import os
 import re
@@ -19,6 +57,8 @@ SEARCH_ENGINES = {
     "Tumblr": "https://www.tumblr.com/search/{query}",
     "Patreon": "https://www.patreon.com/search?q={query}",
     "LoversLab": "https://www.loverslab.com/search/?q={query}",
+    "SexySims": "https://sexysims.info/browse.php?tag={query}",
+    "NewSea": "http://www.newseasims.com/sims3-search.php?query={query}",
     "Google": "https://www.google.com/search?q=sims+4+{query}",
 }
 

@@ -7,6 +7,12 @@
 # - Probleme im Mods-Ordner (zu tief, beschädigt, Duplikate, Konflikte, ...)
 # - Pro Mod-Datei: Kategorie, Status (genutzt / ungenutzt / ...), in welchen Spielständen, Tray
 # - Suchlinks für defekte Dateien
+#
+# Datenbank-Speicherung:
+# - SQLite (Standard für Einzelnutzer, leichtgewichtig, serverlos)
+# - Geplant: MySQL/PostgreSQL als separates Plugin für Fortgeschrittene
+#   -> einfach einen weiteren Database Adapter neben _write_sqlite schreiben
+# Optional: Custom Branding (Titel, Logo) – Titel kommt bereits aus config.json
 
 import os
 import csv
