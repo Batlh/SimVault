@@ -2,6 +2,8 @@
 # Funktion: Sucht nach fehlenden CC- oder Mod-Dateien online (TSR, CurseForge, ModTheSims etc.)
 #
 # Aktueller Stand:
+# - Die Quellen kommen aus dem Paket "sources" (mitgelieferte Quellen + Erweiterungen aus dem
+#   Ordner "plugins", siehe plugins/README.md). Neue Webseiten lassen sich dort ergänzen.
 # - Erzeugt Suchlinks aus Dateinamen; ein Klick im Report öffnet die Suche im Browser.
 # - Die Seiten werden noch nicht automatisch abgefragt: TSR, CurseForge, Patreon & Co.
 #   blocken einfache Skript-Anfragen (Cloudflare) oder brauchen JavaScript/Login.
@@ -48,21 +50,12 @@
 
 import os
 import re
-from urllib.parse import quote_plus
 
-SEARCH_ENGINES = {
-    "The Sims Resource": "https://www.thesimsresource.com/search/{query}/",
-    "CurseForge": "https://www.curseforge.com/sims4/search?search={query}",
-    "ModTheSims": "https://modthesims.info/browse.php?tag={query}",
-    "Tumblr": "https://www.tumblr.com/search/{query}",
-    "Patreon": "https://www.patreon.com/search?q={query}",
-    "LoversLab": "https://www.loverslab.com/search/?q={query}",
-    "SexySims": "https://sexysims.info/browse.php?tag={query}",
-    # Die alte URL (sims3-search.php) durchsucht Sims-3-Inhalte; eine Sims-4-Such-URL ist nicht
-    # bekannt (die Seite blockt automatische Abrufe), daher Google-Suche direkt auf newseasims.com
-    "NewSea": "https://www.google.com/search?q=site%3Anewseasims.com+sims+4+{query}",
-    "Google": "https://www.google.com/search?q=sims+4+{query}",
-}
+from sources import enabled_sources
+from sources.builtin import builtin_sources
+
+# Für ältere Aufrufer: {Seitenname: URL-Vorlage} der mitgelieferten Quellen
+SEARCH_ENGINES = {s.name: s.template for s in builtin_sources()}
 
 
 def query_from_filename(filename):
@@ -74,12 +67,17 @@ def query_from_filename(filename):
     return re.sub(r"\s+", " ", name).strip()
 
 
-def search_links(name):
-    """Gibt {Seitenname: Such-URL} für einen Dateinamen oder Suchbegriff zurück."""
-    query = quote_plus(query_from_filename(name))
-    return {site: url.format(query=query) for site, url in SEARCH_ENGINES.items()}
+def search_links(name, cfg=None):
+    """Gibt {Quellenname: Such-URL} für einen Dateinamen oder Suchbegriff zurück (aktive Quellen)."""
+    query = query_from_filename(name)
+    links = {}
+    for source in enabled_sources(cfg):
+        url = source.search_url(query)
+        if url:
+            links[source.name] = url
+    return links
 
 
-def search_alternatives(names):
-    """Gibt {Name: {Seitenname: Such-URL}} für mehrere Namen zurück."""
-    return {name: search_links(name) for name in names}
+def search_alternatives(names, cfg=None):
+    """Gibt {Name: {Quellenname: Such-URL}} für mehrere Namen zurück."""
+    return {name: search_links(name, cfg) for name in names}

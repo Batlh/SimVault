@@ -7,7 +7,28 @@ which Custom Content you actually use, what is broken, and what can go.
 
 ---
 
+## 💾 Download & Start
+
+**Windows program:** download `SimVault-Windows.zip` from
+[Releases](https://github.com/Batlh/SimVault/releases), unzip it anywhere and start **`SimVault.exe`** —
+no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVault`
+(or next to the program if a `config.json` is placed there).
+
+**From source:** `pip install -r requirements-gui.txt` and `py -3 simvault_gui.py`
+(the command line `main.py` works without any extra packages).
+
+---
+
 ## 🚀 Features (working)
+
+- 🖥️ **Program window (Qt/PySide6)** — overview, mods table with filter and **preview images from the
+  packages** (with transparency), missing CC with library households, CC search with restore, backups,
+  sources and settings — long tasks run in the background with progress and a cancel button.
+
+- 🧭 **Sources & extensions** — all web sources (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab,
+  SexySims, NewSea, Google) are plugins. New sites are added as a small `.json` file (search link, no
+  programming) or a `.py` file (real results, optionally with login) in the `plugins` folder — see
+  [plugins/README.md](plugins/README.md). Sources can be switched on/off in the program.
 
 - 📂 **Mod Folder Scanner** — reads every `.package` via its DBPF index and sorts it into
   CAS, Build/Buy objects, tuning/other and script mods. Detects:
@@ -75,14 +96,14 @@ which Custom Content you actually use, what is broken, and what can go.
 - 🖼️ **Library thumbnails** in the report (`.hhi`/`.sgi` use an unknown image encoding)
 - 🌐 **CC Search Engine** — real result lists (title, image, download link, description) instead of search links
   - fixed sources as core modules (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims, NewSea)
-  - extensible plugin architecture for additional, user-defined sources
+  - extensible plugin architecture for additional, user-defined sources ✅ (done – see `plugins/`;
+    full sources plug in via `search()`, the program side for result lists is next)
   - headless browser support (Selenium/Playwright)
   - automated download management
 - 🔐 **Secure Login Manager** — manual login in a visible window with 2FA support;
   cookies stored **AES256-encrypted** and decrypted only in RAM at runtime (no plain-text cookies on disk)
 - 🛡️ **Captcha Handling** — manual captcha solving via the visible login window (optional automation later)
 - ♻️ **Recovery** — restore function for Full, Delta and Selective backups, automatic cleanup of old backups
-- 🖥️ **GUI Interface** (Tkinter / PyQt / Web frontend)
 - 📱 **Mobile App** for remote analysis
 - 🔄 **Auto-Updater**
 - 🌍 **Full Internationalization (i18n)**
@@ -91,7 +112,7 @@ which Custom Content you actually use, what is broken, and what can go.
 
 ---
 
-## 🛠️ Installation & Usage
+## 🛠️ Command line
 
 1. Clone the repository:
     ```bash

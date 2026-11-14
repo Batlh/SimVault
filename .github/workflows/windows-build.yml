@@ -1,0 +1,50 @@
+# Baut das Windows-Programm SimVault.exe und hängt es an ein GitHub-Release.
+# Auslöser: ein Versions-Tag (z. B. v0.5.0) oder von Hand unter "Actions" → "Windows-Programm bauen".
+name: Windows-Programm bauen
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r requirements-gui.txt pyinstaller
+
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+        continue-on-error: true
+
+      - name: SimVault.exe bauen
+        run: pyinstaller --noconfirm simvault.spec
+
+      - name: Erweiterungs-Ordner und Anleitung dazulegen
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse plugins dist/SimVault/plugins
+          Copy-Item README.md dist/SimVault/
+          Compress-Archive -Path dist/SimVault -DestinationPath SimVault-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SimVault-Windows
+          path: SimVault-Windows.zip
+
+      - name: Release erstellen
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: SimVault-Windows.zip
+          generate_release_notes: true

@@ -36,3 +36,7 @@ logs/
 
 # Zwischenspeicher der Spiel-IDs
 game_ids_cache.json
+
+# Programm-Bau (PyInstaller)
+build/
+dist/

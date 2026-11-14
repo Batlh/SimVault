@@ -1,0 +1,16 @@
+[
+  {
+    "id": "simsdom",
+    "name": "SimsDom",
+    "search_url": "https://simsdom.com/search?q={query}",
+    "homepage": "https://simsdom.com",
+    "enabled": true
+  },
+  {
+    "id": "simsfinds",
+    "name": "SimsFinds",
+    "search_url": "https://www.simsfinds.com/search?q={query}&game=4",
+    "homepage": "https://www.simsfinds.com",
+    "enabled": true
+  }
+]

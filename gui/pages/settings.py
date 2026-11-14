@@ -1,0 +1,125 @@
+# Seite: Einstellungen – Ordner, Entpacker, Suchoptionen (gespeichert in config.json)
+
+import os
+
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+                               QPushButton, QSpinBox, QVBoxLayout, QWidget)
+
+import archive_tools
+from ..widgets import PathEdit, open_path, page_header
+
+
+class SettingsPage(QWidget):
+    def __init__(self, state):
+        super().__init__()
+        self.state = state
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.addWidget(page_header("Einstellungen"))
+
+        folders = QGroupBox("Ordner")
+        f = QFormLayout(folders)
+        self.sims = PathEdit(placeholder="z. B. Dokumente\\Electronic Arts\\Die Sims 4")
+        self.game = PathEdit(placeholder="optional – Spiel-Installation für sichere Fehlend-Erkennung")
+        self.backup = PathEdit()
+        self.reports = PathEdit()
+        self.temp = PathEdit(placeholder="leer = System-Temp (z. B. auf D: legen, wenn C: knapp ist)")
+        f.addRow("Sims-4-Ordner:", self.sims)
+        f.addRow("Spielordner:", self.game)
+        f.addRow("Backups:", self.backup)
+        f.addRow("Berichte:", self.reports)
+        f.addRow("Temp-Ordner:", self.temp)
+        lay.addWidget(folders)
+
+        search = QGroupBox("CC-Suche")
+        s = QFormLayout(search)
+        ex_row = QHBoxLayout()
+        self.extractor = QComboBox()
+        self.extractor_path = PathEdit(folder=False, placeholder="Pfad zu 7z.exe, UnRAR.exe oder tar.exe")
+        ex_row.addWidget(self.extractor)
+        ex_row.addWidget(self.extractor_path, 1)
+        self.extractor.currentIndexChanged.connect(self._extractor_changed)
+        self.hint = QLabel()
+        self.hint.setObjectName("Muted")
+        self.hint.setWordWrap(True)
+        self.drives = QCheckBox("weitere Laufwerke (D:, E:, USB …) mit durchsuchen")
+        self.max_mb = QSpinBox()
+        self.max_mb.setRange(100, 100000)
+        self.max_mb.setSuffix(" MB")
+        s.addRow("Entpacker für RAR/7z:", ex_row)
+        s.addRow("", self.hint)
+        s.addRow("", self.drives)
+        s.addRow("Archive größer als … überspringen:", self.max_mb)
+        lay.addWidget(search)
+
+        bottom = QHBoxLayout()
+        save = QPushButton("Speichern")
+        save.setObjectName("Primary")
+        save.clicked.connect(self.save)
+        self.cfg_label = QLabel()
+        self.cfg_label.setObjectName("Muted")
+        open_cfg = QPushButton("Einstellungsdatei öffnen")
+        open_cfg.clicked.connect(lambda: open_path(os.path.dirname(self.state.config_path)))
+        bottom.addWidget(save)
+        bottom.addWidget(open_cfg)
+        bottom.addWidget(self.cfg_label, 1)
+        lay.addLayout(bottom)
+        lay.addStretch(1)
+
+        state.config_changed.connect(self.load)
+        self.load()
+
+    def load(self):
+        raw, cfg = self.state.raw, self.state.cfg
+        self.sims.setText(raw.get("sims_folder") or cfg.get("sims_folder"))
+        self.game.setText(raw.get("game_folder") or cfg.get("game_folder"))
+        self.backup.setText(cfg.get("backup_folder"))
+        self.reports.setText(cfg.get("report_folder"))
+        self.temp.setText(raw.get("temp_folder", ""))
+        self.drives.setChecked(bool(raw.get("search_drives", True)))
+        self.max_mb.setValue(int(raw.get("max_archive_mb", 4096)))
+        self.cfg_label.setText(self.state.config_path)
+
+        self.tools = archive_tools.find_tools()
+        self.extractor.blockSignals(True)
+        self.extractor.clear()
+        self.extractor.addItem("Automatisch", "")
+        for kind, path in self.tools:
+            self.extractor.addItem(f"{archive_tools.TOOL_NAMES[kind]}", path)
+        self.extractor.addItem("Eigener Pfad …", "custom")
+        self.extractor.addItem("Keiner (RAR/7z überspringen)", "none")
+        current = raw.get("extractor", "")
+        index = self.extractor.findData(current)
+        if index < 0 and current:
+            index = self.extractor.findData("custom")
+            self.extractor_path.setText(current)
+        self.extractor.setCurrentIndex(max(index, 0))
+        self.extractor.blockSignals(False)
+        self._extractor_changed()
+
+    def _extractor_changed(self):
+        data = self.extractor.currentData()
+        self.extractor_path.setVisible(data == "custom")
+        if not any(k == "7z" for k, _p in self.tools):
+            self.hint.setText("Tipp: 7-Zip öffnet RAR und alle 7z-Archive (winget install 7zip.7zip). "
+                              "UnRAR kann nur RAR, das Windows-tar viele 7z nicht.")
+        else:
+            self.hint.setText("")
+
+    def save(self):
+        raw = dict(self.state.raw)
+        sims = self.sims.text()
+        if sims and not os.path.isdir(sims):
+            QMessageBox.warning(self, "Einstellungen", f"Den Sims-4-Ordner gibt es nicht:\n{sims}")
+            return
+        raw["sims_folder"] = sims
+        raw["game_folder"] = self.game.text()
+        raw["backup_folder"] = self.backup.text() or "./backups"
+        raw["report_folder"] = self.reports.text() or "./reports"
+        raw["temp_folder"] = self.temp.text()
+        raw["search_drives"] = self.drives.isChecked()
+        raw["max_archive_mb"] = self.max_mb.value()
+        data = self.extractor.currentData()
+        raw["extractor"] = self.extractor_path.text() if data == "custom" else data
+        self.state.save_config(raw)
+        self.state.message.emit("Einstellungen gespeichert.")

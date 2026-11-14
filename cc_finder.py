@@ -141,14 +141,20 @@ def cleanup_stale_temp(base=None):
     return removed
 
 
+class Cancelled(Exception):
+    """Die Suche wurde vom Nutzer abgebrochen."""
+
+
 def search(folders, wanted, exclude=(), progress=None, work_dir=None, tools=None, max_archive_mb=4096,
-           keep_hits=False):
+           keep_hits=False, should_stop=None):
     """Durchsucht folders nach Paketen mit IDs aus wanted.
 
     Speicherplatz: Jedes RAR/7z wird nur kurz entpackt und direkt danach wieder gelöscht –
     auch wenn etwas gefunden wurde. Nur mit keep_hits=True (für --restore) bleiben die
     gefundenen Pakete selbst im work_dir liegen, bis der Aufrufer es löscht.
     Vor jedem Entpacken wird geprüft, ob genug Platz frei ist.
+
+    should_stop: Funktion ohne Argumente; liefert sie True, bricht die Suche mit Cancelled ab.
 
     Gibt (treffer, nicht_lesbar) zurück:
       treffer:      [{"pfad", "archiv_eintrag" (oder None), "ids": set, "groesse", "temp_datei"?}]
@@ -169,6 +175,8 @@ def search(folders, wanted, exclude=(), progress=None, work_dir=None, tools=None
             for root, dirs, files in os.walk(folder):
                 dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS
                            and os.path.normcase(os.path.abspath(os.path.join(root, d))) not in excluded]
+                if should_stop and should_stop():
+                    raise Cancelled()
                 for name in files:
                     run.file(os.path.join(root, name))
     finally:

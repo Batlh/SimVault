@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import zlib
 import subprocess
+import textwrap
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -730,5 +731,143 @@ class RestoreFallbackTests(unittest.TestCase):
                     "weitere_fundorte": [f"{good} → Mods/x.package"]}
             created, failed = cc_finder.restore([item], os.path.join(tmp, "Mods"))
             self.assertEqual((len(created), failed), (1, []))
+        finally:
+            shutil.rmtree(tmp)
+
+
+# --- Quellen / Erweiterungen --------------------------------------------------
+
+import sources
+from sources import loader as source_loader
+
+
+class SourceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.cfg = {"plugin_folders": [self.tmp]}
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def _write(self, name, text):
+        with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_builtin(self):
+        srcs, errors = sources.load_sources({"plugin_folders": []})
+        ids = {s.id for s in srcs}
+        self.assertTrue({"tsr", "curseforge", "patreon", "newsea"} <= ids)
+        tsr = next(s for s in srcs if s.id == "tsr")
+        self.assertEqual(tsr.search_url("Cool Hair"), "https://www.thesimsresource.com/search/Cool+Hair/")
+        self.assertFalse(tsr.can_search)
+
+    def test_json_python_override_and_errors(self):
+        self._write("simsdom.json", json.dumps({"id": "SimsDom", "name": "SimsDom",
+                                                "search_url": "https://simsdom.com/s?q={query}"}))
+        self._write("tsr_fix.json", json.dumps([{"id": "tsr", "name": "TSR neu",
+                                                 "search_url": "https://tsr.example/{query}"}]))
+        self._write("voll.py", textwrap.dedent("""
+            from sources.base import Source, SearchResult
+            class Voll(Source):
+                id = "voll"
+                name = "Volle Quelle"
+                needs_login = True
+                def search(self, query, session=None):
+                    return [SearchResult(title=query.upper(), url="https://x/1", source_id=self.id)]
+        """))
+        self._write("kaputt.py", "this is not python")
+        self._write("zukunft.py", "REQUIRES_API = 99\n")
+        self._write("ohne_query.json", json.dumps({"id": "x", "name": "X", "search_url": "https://x"}))
+        self._write("_aus.json", json.dumps({"id": "aus", "name": "Aus", "search_url": "https://a/{query}"}))
+
+        srcs, errors = sources.load_sources(self.cfg)
+        by_id = {s.id: s for s in srcs}
+        self.assertEqual(by_id["simsdom"].search_url("a b"), "https://simsdom.com/s?q=a+b")
+        self.assertEqual(by_id["tsr"].name, "TSR neu")                     # ersetzt die mitgelieferte
+        self.assertTrue(by_id["voll"].can_search)
+        self.assertEqual(by_id["voll"].search("haare")[0].title, "HAARE")
+        self.assertNotIn("aus", by_id)                                       # _-Dateien ignoriert
+        failed = sorted(os.path.basename(p) for p, _m in errors)
+        self.assertEqual(failed, ["kaputt.py", "ohne_query.json", "zukunft.py"])
+
+    def test_enable_disable_and_links(self):
+        cfg = {"plugin_folders": [], "sources_enabled": {"google": False, "tsr": True}}
+        ids = {s.id for s in sources.enabled_sources(cfg)}
+        self.assertNotIn("google", ids)
+        links = cc_searcher.search_links("Cool_Hair.package", cfg)
+        self.assertNotIn("Google", links)
+        self.assertIn("Cool+Hair", links["CurseForge"])
+
+
+import thumbnails
+
+
+class ThumbnailTests(unittest.TestCase):
+    def test_split_alpha_and_extract(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"maske"
+        alfa = b"ALFA" + len(png).to_bytes(4, "big") + png
+        jpeg = (b"\xff\xd8"
+                + b"\xff\xe0" + (16).to_bytes(2, "big") + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+                + b"\xff\xe0" + (len(alfa) + 2).to_bytes(2, "big") + alfa
+                + b"\x01\x01\x00\x60\x00\x60\x00\x00"                      # Rest-Bytes wie bei EA
+                + b"\xff\xdb" + (4).to_bytes(2, "big") + b"\x00\x01"
+                + b"\xff\xda" + (2).to_bytes(2, "big") + b"BILDDATEN\xff\xd9")
+        clean, alpha = thumbnails.split_alpha(jpeg)
+        self.assertEqual(alpha, png)
+        self.assertNotIn(b"ALFA", clean)
+        self.assertNotIn(b"\x01\x01\x00\x60\x00\x60\x00\x00", clean)
+        self.assertTrue(clean.startswith(b"\xff\xd8\xff\xe0") and clean.endswith(b"BILDDATEN\xff\xd9"))
+        self.assertEqual(thumbnails.split_alpha(b"\x89PNGxyz"), (b"\x89PNGxyz", None))
+
+        tmp = tempfile.mkdtemp()
+        try:
+            pkg = os.path.join(tmp, "a.package")
+            dbpf.write_package(pkg, [(dbpf.TYPE_CASP, 0, CAS_ID, b"casp"), (0x3C1AF1F2, 0, CAS_ID, jpeg),
+                                     (0x3C1AF1F2, 0, CAS_ID + 1, b"kein Bild")])
+            self.assertEqual(thumbnails.thumbnails(pkg), [(CAS_ID, jpeg)])
+            self.assertEqual(thumbnails.first_thumbnail(pkg), jpeg)
+        finally:
+            shutil.rmtree(tmp)
+
+
+# --- Programmfenster (nur wenn PySide6 installiert ist) -----------------------
+
+try:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    HAVE_QT = True
+except ImportError:
+    HAVE_QT = False
+
+
+@unittest.skipUnless(HAVE_QT, "PySide6 nicht installiert")
+class GuiSmokeTests(unittest.TestCase):
+    def test_window_and_pages_with_data(self):
+        import core
+        from gui import theme
+        from gui.main_window import MainWindow
+        app = QApplication.instance() or QApplication([])
+        theme.apply(app)
+        tmp = tempfile.mkdtemp()
+        try:
+            sims = build_sims_folder(tmp)
+            cfg_path = os.path.join(tmp, "config.json")
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump({"sims_folder": sims, "search_drives": False}, f)
+            window = MainWindow(cfg_path)
+            analysis = core.analyze(window.state.cfg)
+            window.state.set_analysis(analysis)
+            window.state.set_found({"dateien": [], "ordner": [], "nicht_lesbar": [], "gefunden": 0, "gesucht": 1})
+            for i, (name, page) in enumerate(window.pages):
+                window.nav.setCurrentRow(i)
+                app.processEvents()
+                self.assertIs(window.stack.currentWidget(), page)
+            mods = dict(window.pages)["Mods"]
+            self.assertEqual(mods.model.rowCount(), len(analysis["usage"]))
+            missing = dict(window.pages)["Fehlende CC"]
+            self.assertEqual(missing.model.rowCount(), len(analysis["missing"]["teile"]))
+            # Relative Ordner liegen neben der config.json
+            self.assertEqual(window.state.cfg["report_folder"], os.path.join(tmp, "reports"))
+            window.close()
         finally:
             shutil.rmtree(tmp)
