@@ -63,13 +63,19 @@ def full_zip_backup(source_folder, backup_root):
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, start=source_folder)
                 zipf.write(file_path, arcname)
-    print(f"Full ZIP backup created at {zip_path}")
+    return zip_path
 
 # 2. Delta Backup (Only new/changed files)
-def delta_backup(source_folder, backup_root, hash_file='previous_hashes.json'):
+# Hinweis: Ein Delta-Backup enthält nur Änderungen seit dem letzten Lauf – zum Wiederherstellen
+# braucht man das letzte Voll-Backup plus alle Deltas danach.
+def delta_backup(source_folder, backup_root, hash_file=None):
     os.makedirs(backup_root, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    delta_folder = os.path.join(backup_root, f"delta_backup_{timestamp}")
+    folder_name = os.path.basename(source_folder.rstrip(os.sep).rstrip("/"))
+    # Eigene Hash-Datei pro Quellordner, sonst vergleicht ein Mods-Backup mit den Hashes der Spielstände
+    if hash_file is None:
+        hash_file = os.path.join(backup_root, f"{folder_name}_hashes.json")
+    delta_folder = os.path.join(backup_root, f"{folder_name}_delta_{timestamp}")
     os.makedirs(delta_folder, exist_ok=True)
 
     previous_hashes = load_previous_hashes(hash_file)
@@ -89,13 +95,14 @@ def delta_backup(source_folder, backup_root, hash_file='previous_hashes.json'):
                 shutil.copy2(file_path, dest_path)
     
     save_current_hashes(current_hashes, hash_file)
-    print(f"Delta backup created at {delta_folder}")
+    return delta_folder
 
 # 3. Selective Backup (User specifies files to backup)
 def selective_backup(file_list, source_folder, backup_root):
     os.makedirs(backup_root, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    selective_folder = os.path.join(backup_root, f"selective_backup_{timestamp}")
+    folder_name = os.path.basename(source_folder.rstrip(os.sep).rstrip("/"))
+    selective_folder = os.path.join(backup_root, f"{folder_name}_selective_{timestamp}")
     os.makedirs(selective_folder, exist_ok=True)
 
     for file_rel_path in file_list:
@@ -106,15 +113,15 @@ def selective_backup(file_list, source_folder, backup_root):
             shutil.copy2(source_path, dest_path)
         else:
             print(f"Warning: {source_path} does not exist and was skipped.")
-    print(f"Selective backup created at {selective_folder}")
+    return selective_folder
 
 # Dispatcher
 def backup_manager(mode, source_folder, backup_root, file_list=None):
     if mode == 'full':
-        full_zip_backup(source_folder, backup_root)
+        return full_zip_backup(source_folder, backup_root)
     elif mode == 'delta':
-        delta_backup(source_folder, backup_root)
-    elif mode == 'selective' and file_list is not None:
-        selective_backup(file_list, source_folder, backup_root)
+        return delta_backup(source_folder, backup_root)
+    elif mode == 'selective' and file_list:
+        return selective_backup(file_list, source_folder, backup_root)
     else:
         raise ValueError("Invalid mode or missing file list for selective backup.")

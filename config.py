@@ -1,80 +1,100 @@
 # Modul: config.py
 # Funktion: Laden und Speichern der zentralen Konfigurationsdatei (`config.json`)
-
-# Aufgaben:
-# - Standard-Konfigurationsdatei verwalten (`config.json`)
-# - Laden der Konfiguration beim Start
-# - Speichern von Änderungen an der Konfiguration
-# - Validierung von Konfigurationseinträgen
-# - Erstellen einer Standard-Config, falls keine existiert
-
-# Geplante Features:
-# - Standardwerte für:
-#   - Mods-Ordner-Pfad
-#   - Savegames-Ordner-Pfad
-#   - Backup-Pfad
-#   - Backup-Modus (full, delta, selective)
-#   - Berichtformate (HTML, CSV, JSON, MD)
-#   - Datenbank-Typ (sqlite, mysql)
-# - Optional:
-#   - Custom Branding (z.B. Logo, App-Name)
-#   - Spracheinstellungen (future i18n Support)
-
-# Strukturvorschlag:
-# - Funktion: load_config(config_path='config.json')
-# - Funktion: save_config(config, config_path='config.json')
-# - Funktion: create_default_config(config_path='config.json')
+#
+# - Fehlt die Datei, wird sie mit Standardwerten angelegt.
+# - Der Sims-4-Ordner wird automatisch gesucht (auch deutsche Installation "Die Sims 4"
+#   und Dokumente-Ordner in OneDrive).
+# - Fehlende Einträge in einer bestehenden config.json werden mit Standardwerten ergänzt.
 
 import os
+import copy
 import json
 
-# Default configuration settings
+SIMS_FOLDER_NAMES = ["Die Sims 4", "The Sims 4", "Les Sims 4", "De Sims 4", "Los Sims 4", "I Sims 4"]
+
 DEFAULT_CONFIG = {
-    "mods_folder": "C:/Users/YourName/Documents/Electronic Arts/The Sims 4/Mods",
-    "savegames_folder": "C:/Users/YourName/Documents/Electronic Arts/The Sims 4/saves",
+    "sims_folder": "",          # leer = automatisch suchen
+    "mods_folder": "",          # leer = <sims_folder>/Mods
+    "savegames_folder": "",     # leer = <sims_folder>/saves
+    "tray_folder": "",          # leer = <sims_folder>/Tray
     "backup_folder": "./backups",
-    "backup_mode": "full",  # options: full, delta, selective
+    "backup_mode": "full",      # full, delta, selective
+    "report_folder": "./reports",
     "report_formats": ["html", "csv", "json", "md"],
     "database": {
-        "type": "sqlite",  # options: sqlite, mysql (future)
+        "type": "sqlite",       # sqlite, später evtl. mysql
         "sqlite_path": "simvault_data.db",
-        "mysql": {
-            "enabled": False,
-            "host": "localhost",
-            "user": "root",
-            "password": "",
-            "database": "simvault"
-        }
     },
     "branding": {
         "app_name": "SimVault",
-        "logo_path": ""
+        "logo_path": "",
     },
-    "language": "en"  # future: i18n support
+    "language": "de",
 }
 
-def create_default_config(config_path='config.json'):
+
+def _documents_candidates():
+    home = os.path.expanduser("~")
+    candidates = [os.path.join(home, "Documents"), os.path.join(home, "Dokumente")]
+    for env in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        base = os.environ.get(env)
+        if base:
+            candidates += [os.path.join(base, "Documents"), os.path.join(base, "Dokumente")]
+    return candidates
+
+
+def find_sims_folder():
+    """Sucht den Sims-4-Benutzerordner. Bevorzugt den Ordner, der Spielstände enthält."""
+    found = []
+    for docs in _documents_candidates():
+        for name in SIMS_FOLDER_NAMES:
+            path = os.path.join(docs, "Electronic Arts", name)
+            if os.path.isdir(path):
+                found.append(path)
+    for path in found:
+        if os.path.isdir(os.path.join(path, "saves")):
+            return path
+    return found[0] if found else ""
+
+
+def _merge(defaults, user):
+    merged = copy.deepcopy(defaults)
+    for key, value in user.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def resolve_paths(config):
+    """Füllt leere Pfade aus dem Sims-Ordner auf. Verändert config nicht, gibt eine Kopie zurück."""
+    cfg = copy.deepcopy(config)
+    sims = cfg.get("sims_folder") or find_sims_folder()
+    cfg["sims_folder"] = sims
+    for key, sub in (("mods_folder", "Mods"), ("savegames_folder", "saves"), ("tray_folder", "Tray")):
+        if not cfg.get(key) and sims:
+            cfg[key] = os.path.join(sims, sub)
+    return cfg
+
+
+def create_default_config(config_path="config.json"):
     """Erstellt eine Standard-Konfigurationsdatei, falls keine existiert."""
     if not os.path.exists(config_path):
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(DEFAULT_CONFIG, f, indent=4)
-        print(f"Default config created at {config_path}")
-    else:
-        print(f"Config file already exists at {config_path}")
+        save_config(DEFAULT_CONFIG, config_path)
+        return True
+    return False
 
-def load_config(config_path='config.json'):
-    """Lädt die Konfigurationsdatei."""
-    if not os.path.exists(config_path):
-        print("No config file found. Creating default config...")
-        create_default_config(config_path)
-    
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-    print(f"Config loaded from {config_path}")
-    return config
 
-def save_config(config, config_path='config.json'):
+def load_config(config_path="config.json"):
+    """Lädt die Konfiguration (legt sie bei Bedarf an) und ergänzt fehlende Werte."""
+    create_default_config(config_path)
+    with open(config_path, "r", encoding="utf-8") as f:
+        user = json.load(f)
+    return _merge(DEFAULT_CONFIG, user)
+
+
+def save_config(config, config_path="config.json"):
     """Speichert die Konfigurationsdatei."""
-    with open(config_path, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=4)
-    print(f"Config saved to {config_path}")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
