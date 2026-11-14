@@ -208,7 +208,7 @@ def cmd_find(cfg, args):
                                             max_archive_mb=cfg.get("max_archive_mb", 4096))
         found, n_found = cc_finder.summarize(hits, parts)
         restored = failed = None
-        if found and args.restore:
+        if found and args.restore and _backup_before_restore(cfg, args):
             restored, failed = cc_finder.restore(found, cfg["mods_folder"], exclude=args.ohne or [], tools=tools,
                                                  work_dir=work_dir, progress=_progress)
     for item in found:
@@ -271,6 +271,21 @@ def _latest_find_report(folder):
     return None, None
 
 
+def _backup_before_restore(cfg, args):
+    """Sichert den Mods-Ordner als ZIP, bevor etwas zurückgeholt wird. Gibt False bei Fehler zurück."""
+    if getattr(args, "ohne_backup", False):
+        return True
+    from backup_manager import full_zip_backup
+    print(f"Sichere zuerst den Mods-Ordner nach {os.path.abspath(cfg['backup_folder'])} …")
+    try:
+        path = full_zip_backup(cfg["mods_folder"], cfg["backup_folder"])
+    except OSError as e:
+        print(f"Backup fehlgeschlagen ({e}) – es wird nichts zurückgeholt.")
+        return False
+    print(f"Backup: {os.path.abspath(path)}")
+    return True
+
+
 def cmd_restore(cfg, args):
     """Holt die Funde aus dem letzten Suchbericht zurück – ohne erneute Suche."""
     import json
@@ -290,6 +305,8 @@ def cmd_restore(cfg, args):
         print('Kein Suchbericht mit Funden gefunden – zuerst "py -3 main.py find" ausführen.')
         return 1
     print(f"Bericht: {path} – {len(found)} Datei(en)")
+    if not _backup_before_restore(cfg, args):
+        return 1
     tools = archive_tools.tools_from_config(cfg)
     temp_base = cfg.get("temp_folder") or None
     with tempfile.TemporaryDirectory(prefix=cc_finder.TEMP_PREFIX, dir=temp_base) as work_dir:
@@ -411,6 +428,7 @@ def build_parser():
                    help="auch das komplette Systemlaufwerk C: durchsuchen (dauert länger)")
     f.add_argument("--ohne-laufwerke", action="store_true",
                    help="nur die Ordner durchsuchen, keine weiteren Laufwerke (D:, E: …)")
+    f.add_argument("--ohne-backup", action="store_true", help="bei --restore den Mods-Ordner vorher nicht sichern")
     f.add_argument("--ohne", nargs="+", metavar="TEXT",
                    help="beim Zurückholen Funde auslassen, deren Datei/Fundort diesen Text enthält")
     f.set_defaults(func=cmd_find)
@@ -418,6 +436,7 @@ def build_parser():
     r = sub.add_parser("restore", help="Funde aus dem letzten Suchbericht in den Mods-Ordner zurückholen")
     r.add_argument("--ohne", nargs="+", metavar="TEXT", help="Funde auslassen, deren Datei/Fundort TEXT enthält")
     r.add_argument("--bericht", help="bestimmter Bericht (.json) statt des neuesten")
+    r.add_argument("--ohne-backup", action="store_true", help="Mods-Ordner vorher nicht sichern")
     r.set_defaults(func=cmd_restore)
 
     st = sub.add_parser("setup", help="einrichten: Ordner, Entpacker für RAR/7z, Laufwerke")

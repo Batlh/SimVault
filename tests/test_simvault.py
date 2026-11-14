@@ -698,8 +698,18 @@ class NestedRestoreTests(unittest.TestCase):
             self.assertTrue(any("a/haushalt.7z → Ivka_Hair.package" in x for x in locations["Ivka_Hair.package"]))
             self.assertEqual(fs["nicht_lesbar"], [])
 
+            backups = os.path.join(tmp, "backups")
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg_data = json.load(f)
+            cfg_data["backup_folder"] = backups
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cfg_data, f)
             self.assertEqual(main.main(["--config", cfg_path, "restore", "--ohne", "nichts-davon"]), 0)
             self.assertEqual(sorted(os.listdir(restore_dir)), ["Ivka_Hair.package", "Sofa.package"])
+            # vorher wurde der Mods-Ordner gesichert – im Backup ist der Wiederherstellungsordner noch nicht drin
+            (backup_zip,) = os.listdir(backups)
+            with _zipfile.ZipFile(os.path.join(backups, backup_zip)) as z:
+                self.assertEqual(z.namelist(), ["Installiert.package"])
             self.assertEqual(dbpf.read_index(os.path.join(restore_dir, "Sofa.package"))[0].instance, MISSING_OBJ)
             # Temp-Ordner aufgeräumt
             self.assertEqual([d for d in os.listdir(tempfile.gettempdir()) if d.startswith(cc_finder.TEMP_PREFIX)], [])

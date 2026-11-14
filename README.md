@@ -48,7 +48,8 @@ which Custom Content you actually use, what is broken, and what can go.
   `--ganzer-pc` also scans the whole C: drive.
   `python main.py restore` copies the finds of the last search to `Mods/SimVault_wiederhergestellt` without
   searching again — also out of nested archives (ZIP in ZIP, RAR in ZIP …); if one location fails, the
-  other locations of the same file are tried. Nothing is overwritten; `--ohne TEXT` leaves out finds whose
+  other locations of the same file are tried. Before that, the Mods folder is backed up as a ZIP
+  automatically (skip with `--ohne-backup`). Nothing is overwritten; `--ohne TEXT` leaves out finds whose
   name or location contains TEXT. (`find --restore` searches and restores in one go.) The same file found in several places
   is listed once, with all locations.
 
