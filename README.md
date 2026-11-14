@@ -34,8 +34,11 @@ which Custom Content you actually use, what is broken, and what can go.
 
 - 🔦 **CC Finder ("Fundgrube")** — `python main.py find` searches your PC for the missing CC:
   Downloads, old Mods folders (e.g. an English "The Sims 4" folder next to "Die Sims 4"),
-  Sims 4 Mod Manager and CurseForge folders, or any folder you name — including `.zip` archives.
-  With `--restore` the found packages are copied to `Mods/SimVault_wiederhergestellt` (nothing is overwritten).
+  Sims 4 Mod Manager and CurseForge folders, **all other drives** (D:, E:, USB sticks; system folders
+  skipped), or any folder you name — including `.zip` archives. `--ganzer-pc` also scans the whole C: drive.
+  With `--restore` the found packages are copied to `Mods/SimVault_wiederhergestellt` (nothing is overwritten);
+  `--ohne TEXT` leaves out finds whose name or location contains TEXT. The same file found in several places
+  is listed once, with all locations.
 
 - 📄 **Report Generator** — HTML (sortable, filterable, no internet needed), CSV (Excel-ready),
   JSON and Markdown, plus a local SQLite database with every scan.
@@ -90,6 +93,8 @@ which Custom Content you actually use, what is broken, and what can go.
     python main.py scan                 # Mods folder check only
     python main.py find                 # search your PC for missing CC (Downloads, old Mods folders …)
     python main.py find "D:\Old Mods" --restore   # search a folder and copy finds into Mods
+    python main.py find --ganzer-pc     # also scan the whole C: drive
+    python main.py find --restore --ohne WickedWhims   # restore finds, but skip WickedWhims files
     python main.py backup mods          # backup (mode from config.json)
     python main.py backup saves --mode delta
     python main.py config               # show detected paths
@@ -104,7 +109,7 @@ Run the tests: `python -m unittest discover -s tests -v`
 
 ## 💻 Requirements
 
-- Python 3.8+
+- Python 3.8+ (on Windows use `py -3 main.py …` if `python` starts Python 2)
 - No database server required (uses local SQLite by default)
 - Internet connection only for opening the CC search links (and later the CC Search Engine)
 
