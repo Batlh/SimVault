@@ -16,6 +16,7 @@ zusammen mit der Liste aller Commits seit dem letzten Release.
 - Backups wiederherstellen: Voll-Backup, Delta (letztes Voll-Backup plus alle Deltas bis zum gewählten), Auswahl und die Originale aus Reparatur/Konflikt-Aufräumen – wahlweise ersetzen, nur Fehlendes ergänzen oder genau auf Backup-Stand bringen (Übriges wird beiseitegelegt). Befehle `backup list` und `backup restore`.
 - Alte Backups aufräumen nach Regel (Anzahl Voll-Backups je Ordner, Alter in Tagen; das neueste bleibt immer) – auf Knopfdruck oder automatisch nach jedem Backup. Befehl `backup cleanup`.
 - Auto-Updater: sucht beim Start auf GitHub nach einer neuen Version, zeigt den Changelog, lädt herunter und tauscht das Programm nach dem Beenden aus. Befehl `update`.
+- Vorschaubilder der Bibliothek: Haushalte mit fehlender CC zeigen ihr Bild – im Programm und im HTML-Bericht.
 - Eigenes Branding: Programmname und Logo für Fenster und Berichte.
 
 ### Bugfixes

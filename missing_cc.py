@@ -22,6 +22,7 @@
 # - Ist der Spielordner bekannt, werden zusätzlich alle Spiel-IDs ausgeschlossen (ganz sicher).
 #
 # Noch nicht abgedeckt: Grundstücke/Räume in der Bibliothek (.blueprint/.room sind anders verpackt).
+# Die Vorschaubilder der Einträge (.hhi/.bpi/.rmi/.sgi) werden über thumbnails.py gelesen.
 
 import os
 import re
@@ -284,6 +285,8 @@ def read_tray_items(tray_folder):
     items = {}
     if not tray_folder or not os.path.isdir(tray_folder):
         return items
+    import thumbnails
+    images = thumbnails.index_tray_images(tray_folder)
     for path in glob.glob(os.path.join(tray_folder, "*.trayitem")):
         try:
             with open(path, "rb") as f:
@@ -306,6 +309,7 @@ def read_tray_items(tray_folder):
                     except OverflowError:
                         pass
             info["links"] = URL_PATTERN.findall(info["beschreibung"])
+            info["bild"] = images.get(info["id"].lower(), "")      # Vorschaubild (.hhi/.bpi/.rmi/.sgi)
             items[info["id"]] = info
         except (OSError, ValueError):
             continue

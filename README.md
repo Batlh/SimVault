@@ -80,7 +80,8 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   The game installation is **found automatically** (registry entries of EA App/Origin, Steam libraries, Epic,
   usual folders on all drives, optional deeper drive search) and offered for selection — on first start of the
   program, with "Automatisch suchen" in the settings and in `setup`.
-  For library households it also shows the Gallery creator, description, CC links found in the
+  For library households it also shows the **preview picture** (decoded from the Tray's `.hhi`/`.bpi`/`.rmi`
+  files — in the program and embedded in the HTML report), the Gallery creator, description, CC links found in the
   description and a web search link — the best lead to the original CC list.
 
 - 🔦 **CC Finder ("Fundgrube")** — `python main.py find` searches your PC for the missing CC:
@@ -136,7 +137,6 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 ## 🗺️ Roadmap (planned)
 
 - 🔎 **Missing CC Detection for library lots & rooms** (`.blueprint`/`.room` use a different encoding)
-- 🖼️ **Library thumbnails** in the report (`.hhi`/`.sgi` use an unknown image encoding)
 - 🌐 **CC Search Engine** — real result lists (title, image, download link, description) instead of search links
   - fixed sources as core modules (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims, NewSea)
   - extensible plugin architecture for additional, user-defined sources ✅ (done – see `plugins/`;

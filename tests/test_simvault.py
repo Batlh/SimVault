@@ -1310,6 +1310,33 @@ except ImportError:
 
 
 @unittest.skipUnless(HAVE_QT, "PySide6 nicht installiert")
+class TrayImageTests(unittest.TestCase):
+    def test_decode_and_match_to_entry(self):
+        import thumbnails
+        jpeg = bytes.fromhex("ffd8ffe000104a464946000101") + b"bilddaten" * 20 + b"\xff\xd9"
+
+        def scramble(data, key):
+            return bytes(c ^ key[i % 8] for i, c in enumerate(data))
+
+        header = struct.pack("<II8sII", len(jpeg), 0, bytes.fromhex("8efc24489b780e3c"), 2, 0)
+        self.assertEqual(thumbnails.decode_tray_image(header + scramble(jpeg, thumbnails.TRAY_IMAGE_KEY)), jpeg)
+        other_key = bytes(range(1, 9))                       # unbekannter Schlüssel wird aus dem JPEG-Anfang abgeleitet
+        self.assertEqual(thumbnails.decode_tray_image(header + scramble(jpeg, other_key)), jpeg)
+        self.assertIsNone(thumbnails.decode_tray_image(header + b"kein bild" * 10))
+        tmp = tempfile.mkdtemp()
+        try:
+            for name in ("0x00000003!0x0abc000000000001.sgi", "0x00000002!0x0abc000000000001.hhi",
+                         "0x00000012!0x0abc000000000001.hhi", "0x00000001!0x0abc000000000001.trayitem"):
+                with open(os.path.join(tmp, name), "wb") as f:
+                    f.write(header + scramble(jpeg, thumbnails.TRAY_IMAGE_KEY))
+            images = thumbnails.index_tray_images(tmp)
+            self.assertEqual(list(images), ["0x0abc000000000001"])
+            self.assertTrue(images["0x0abc000000000001"].endswith("0x00000002!0x0abc000000000001.hhi"))
+            self.assertEqual(thumbnails.tray_image(images["0x0abc000000000001"]), jpeg)
+        finally:
+            shutil.rmtree(tmp)
+
+
 class GuiSmokeTests(unittest.TestCase):
     def test_window_and_pages_with_data(self):
         import core

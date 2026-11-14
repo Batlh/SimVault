@@ -288,6 +288,21 @@ def _linkify(text):
     return "".join(out)
 
 
+def _tray_picture(path):
+    """Vorschaubild eines Bibliothekseintrags als eingebettetes JPEG (oder leer)."""
+    if not path:
+        return ""
+    import base64
+    import thumbnails
+    data = thumbnails.tray_image(path)
+    if not data:
+        return ""
+    jpeg, _alpha = thumbnails.split_alpha(data)
+    kind = "png" if jpeg.startswith(b"\x89PNG") else "jpeg"
+    return (f"<img src='data:image/{kind};base64,{base64.b64encode(jpeg).decode('ascii')}' alt='' "
+            "style='float:left;height:110px;margin:0 14px 4px 0;border-radius:6px;background:#fff'>")
+
+
 def _logo_tag(logo_path):
     """Eigenes Logo (Custom Branding) als eingebettetes Bild – der Bericht bleibt eine einzelne Datei."""
     if not logo_path or not os.path.isfile(logo_path):
@@ -385,11 +400,13 @@ def _write_html(path, app_name, summary, issues, rows, broken_names, missing=Non
         out.append("<h2>Bibliothek: Einträge mit fehlender CC</h2><div class='meta'>Gespeicherte Haushalte, "
                    "deren CC fehlt. Der Ersteller ist die Galerie-ID – über ihn findest du meist die CC-Liste "
                    "(Galerie, Tumblr, Patreon, YouTube).</div>")
-        for h in households:
+        for n, h in enumerate(households):
             by = f" von <b>{e(h['ersteller'])}</b>" if h["ersteller"] else ""
             orig = (f" (ursprünglich von {e(h['original_ersteller'])})"
                     if h["original_ersteller"] and h["original_ersteller"] != h["ersteller"] else "")
-            out.append(f"<div class='issue'><b>{e(h['name'])}</b>{by}{orig} · {e(h['typ'])} · {e(h['datum'])}"
+            picture = _tray_picture(h.get("bild")) if n < 80 else ""     # Bericht bleibt eine einzelne Datei
+            out.append(f"<div class='issue' style='overflow:auto'>{picture}<b>{e(h['name'])}</b>{by}{orig} · "
+                       f"{e(h['typ'])} · {e(h['datum'])}"
                        f"<br>Fehlt: {e(_parts_summary(h['fehlend']))}")
             if h["beschreibung"]:
                 out.append(f"<br><span class='meta'>{_linkify(h['beschreibung'][:600])}</span>")

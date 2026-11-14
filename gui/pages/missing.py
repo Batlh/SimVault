@@ -108,10 +108,21 @@ class MissingPage(QWidget):
         desc = html.escape(h["beschreibung"])
         for link in h["links"]:
             desc = desc.replace(html.escape(link), f"<a href='{html.escape(link)}'>{html.escape(link)}</a>")
+        picture = ""
+        if h.get("bild"):
+            import thumbnails
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QTextDocument
+            from ..widgets import thumbnail_pixmap
+            data = thumbnails.tray_image(h["bild"])
+            pixmap = thumbnail_pixmap(data, 300) if data else None
+            if pixmap:
+                self.detail.document().addResource(QTextDocument.ImageResource, QUrl("tray://bild"), pixmap)
+                picture = "<p><img src='tray://bild'></p>"
         orig = (f"<br>ursprünglich von {html.escape(h['original_ersteller'])}"
                 if h["original_ersteller"] and h["original_ersteller"] != h["ersteller"] else "")
         self.detail.setHtml(
-            f"<h2>{html.escape(h['name'])}</h2>"
+            f"{picture}<h2>{html.escape(h['name'])}</h2>"
             f"<p>{html.escape(h['typ'])} von <b>{html.escape(h['ersteller'] or 'unbekannt')}</b>{orig}"
             f" · {html.escape(h['datum'])}</p>"
             f"<p><b>Fehlt:</b> {html.escape(', '.join(f'{n}× {a}' for a, n in arts.most_common()))}</p>"
