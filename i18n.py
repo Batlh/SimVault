@@ -186,11 +186,12 @@ EN = {
     "Status:": "Status:", "Spielstände": "Savegames", "Bibliothek": "Library", "Größe": "Size",
     "Im Explorer zeigen": "Show in Explorer", "Im Netz suchen …": "Search the web …", "defekt": "broken",
     "nicht nachweisbar": "not provable", "nicht prüfbar": "not checkable", "Tuning/Sonstiges": "Tuning/other",
-    "Objekt": "Object", "CAS + Objekt": "CAS + object", "Defekt": "Broken",
+    "CAS + Objekt": "CAS + object", "Defekt": "Broken",
     # Fehlende CC
     "CAS-Teile und Objekte, die in Spielständen oder der Bibliothek verwendet werden, aber nicht installiert sind.":
         "CAS parts and objects that are used in savegames or the library but are not installed.",
-    "Filtern (ID, Art, Sim, Haushalt …)": "Filter (ID, kind, Sim, household …)", "Auf dem PC suchen": "Search this PC",
+    "Filtern (ID, Art, Sim, Haushalt, Grundstück …)": "Filter (ID, kind, Sim, household, lot …)",
+    "Objekt": "Object", "Auf dem PC suchen": "Search this PC",
     "ID": "ID", "Art": "Kind", "Anzahl": "Count", "Verwendet von": "Used by", "Gefunden in": "Found in",
     "Teile": "Parts", "Keine Bibliotheks-Einträge mit fehlender CC.": "No library entries with missing CC.",
     "{} fehlende Teile, davon {} auf dem PC gefunden. {}": "{} missing parts, {} of them found on this PC. {}",

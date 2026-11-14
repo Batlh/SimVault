@@ -369,8 +369,8 @@ def _write_html(path, app_name, summary, issues, rows, broken_names, missing=Non
                            + "</ul></details>")
 
     if households:
-        out.append("<h2>Bibliothek: Einträge mit fehlender CC</h2><div class='meta'>Gespeicherte Haushalte, "
-                   "deren CC fehlt. Der Ersteller ist die Galerie-ID – über ihn findest du meist die CC-Liste "
+        out.append("<h2>Bibliothek: Einträge mit fehlender CC</h2><div class='meta'>Gespeicherte Haushalte, Grundstücke "
+                   "und Räume, deren CC fehlt. Der Ersteller ist die Galerie-ID – über ihn findest du meist die CC-Liste "
                    "(Galerie, Tumblr, Patreon, YouTube).</div>")
         for n, h in enumerate(households):
             by = f" von <b>{e(h['ersteller'])}</b>" if h["ersteller"] else ""

@@ -218,6 +218,66 @@ def refpack_decompress(data):
     return bytes(out)
 
 
+def snappy_decompress(data, pos=0):
+    """Entpackt einen Snappy-Block (Google Snappy, Rohformat: Varint-Länge, dann Literale und Rückverweise).
+    Sims 4 nutzt das für Grundstücke und Räume der Bibliothek (.blueprint/.room)."""
+    end = len(data)
+    size = shift = 0
+    while True:
+        if pos >= end:
+            raise DBPFError("Snappy: Länge fehlt")
+        b = data[pos]
+        pos += 1
+        size |= (b & 0x7F) << shift
+        if not b & 0x80:
+            break
+        shift += 7
+        if shift > 35:
+            raise DBPFError("Snappy: Länge ungültig")
+    out = bytearray()
+    while pos < end:
+        tag = data[pos]
+        pos += 1
+        kind = tag & 3
+        if kind == 0:                                   # Literal
+            length = tag >> 2
+            if length >= 60:
+                extra = length - 59
+                length = int.from_bytes(data[pos:pos + extra], "little")
+                pos += extra
+            length += 1
+            if pos + length > end:
+                raise DBPFError("Snappy: Daten abgeschnitten")
+            out += data[pos:pos + length]
+            pos += length
+            continue
+        if kind == 1:
+            length = ((tag >> 2) & 7) + 4
+            offset = ((tag >> 5) << 8) | data[pos]
+            pos += 1
+        elif kind == 2:
+            length = (tag >> 2) + 1
+            offset = int.from_bytes(data[pos:pos + 2], "little")
+            pos += 2
+        else:
+            length = (tag >> 2) + 1
+            offset = int.from_bytes(data[pos:pos + 4], "little")
+            pos += 4
+        start = len(out) - offset
+        if offset == 0 or start < 0:
+            raise DBPFError("Snappy: ungültiger Rückverweis")
+        if offset >= length:
+            out += out[start:start + length]
+        else:                                           # überlappend: Muster wiederholen
+            pattern = bytes(out[start:])
+            out += (pattern * (length // offset + 1))[:length]
+        if len(out) > size:
+            raise DBPFError("Snappy: mehr Daten als angegeben")
+    if len(out) != size:
+        raise DBPFError(f"Snappy: erwartete {size} Bytes, erhalten {len(out)}")
+    return bytes(out)
+
+
 def write_package(path, resources):
     """Schreibt ein einfaches DBPF-Paket. resources: Liste von (type, group, instance, bytes[, compress]).
     Gedacht für Tests und Export, nicht als vollwertiger Paket-Editor."""

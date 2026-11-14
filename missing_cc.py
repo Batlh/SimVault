@@ -21,7 +21,11 @@
 #   ist fehlende CC.
 # - Ist der Spielordner bekannt, werden zusätzlich alle Spiel-IDs ausgeschlossen (ganz sicher).
 #
-# Noch nicht abgedeckt: Grundstücke/Räume in der Bibliothek (.blueprint/.room sind anders verpackt).
+# - Bibliothek: .blueprint (Grundstück) / .room (Raum) – an echten Dateien entschlüsselt:
+#     8 Byte Kopf (u32 Version, u32 Länge des Rests), danach Snappy-komprimiert (Varint-Länge + Snappy-Strom).
+#     Entpackt: u32 Kennung 0xFEA1BAAD, u32 (1/2 …), u32 Länge des Protobuf-Teils, dann Protobuf:
+#       Feld 2 = platzierte Objekte: 1 Objekt-ID, 6 Elternobjekt, 15 Objektdefinition (OBJD-Instanz)
+#     dahinter ein Binärteil "LDNB" (Gelände, Wände, Böden – ohne CC-Verweise in den geprüften Dateien).
 # Die Vorschaubilder der Einträge (.hhi/.bpi/.rmi/.sgi) werden über thumbnails.py gelesen.
 
 import os
@@ -348,10 +352,61 @@ def scan_tray(tray_folder, collector, tray_items=None):
             log.debug("Tray-Datei %s nicht lesbar", path)
 
 
+LOT_MAGIC = 0xFEA1BAAD
+LOT_EXTENSIONS = (".blueprint", ".room")
+
+
+def lot_objects(data):
+    """Objektdefinitionen eines Bibliotheks-Grundstücks oder -Raums (.blueprint/.room) als Counter {ID: Anzahl}.
+    Wirft ValueError, wenn die Datei nicht passt."""
+    import struct
+    if len(data) < 16:
+        raise ValueError("Datei zu kurz")
+    try:
+        raw = dbpf.snappy_decompress(data, 8)
+    except (dbpf.DBPFError, IndexError) as e:
+        raise ValueError(f"nicht entpackbar: {e}") from None
+    if len(raw) >= 12 and struct.unpack_from("<I", raw, 0)[0] == LOT_MAGIC:
+        length = struct.unpack_from("<I", raw, 8)[0]
+        start, end = 12, min(len(raw), 12 + length)
+    else:
+        start, end = 0, len(raw)            # unbekannter Kopf: ganzen Inhalt als Protobuf versuchen
+    objects = Counter()
+    buf = memoryview(raw)
+    for field_no, wire, value in iter_fields(buf, start, end):
+        if field_no == 2 and wire == 2:
+            for f, w, v in iter_fields(buf, *value):
+                if f == 15 and w == 0:
+                    objects[v] += 1
+    return objects
+
+
+def scan_lots(tray_folder, collector, tray_items):
+    """Durchsucht Grundstücke und Räume der Bibliothek nach fehlender CC (Objekte)."""
+    for path in glob.glob(os.path.join(tray_folder, "*")):
+        if not path.lower().endswith(LOT_EXTENSIONS):
+            continue
+        item_id = _tray_item_id(os.path.basename(path))
+        kind = "Raum" if path.lower().endswith(".room") else "Grundstück"
+        info = tray_items.setdefault(item_id, {"id": item_id, "name": item_id, "typ": kind, "beschreibung": "",
+                                               "ersteller": "", "original_ersteller": "", "datum": "", "links": []})
+        kind = info.get("typ") or kind
+        try:
+            with open(path, "rb") as f:
+                objects = lot_objects(f.read())
+        except (OSError, ValueError) as e:
+            log.debug("Bibliotheks-Datei %s nicht lesbar: %s", path, e)
+            continue
+        where = f"Bibliothek „{info.get('name') or item_id}“: {kind}"
+        for definition, count in objects.items():
+            for _ in range(count):
+                collector.add(definition, "Objekt", where, "Bibliothek", group="tray:" + item_id)
+
+
 def find_missing(save_paths, tray_folder, known, progress=None):
     """Sucht fehlende CC. Gibt {"teile": [...], "bibliothek": [...]} zurück:
     teile      – je fehlendem Teil: ID, Art/Steckplatz, wer es nutzt, Quellen
-    bibliothek – je Bibliotheks-Haushalt mit fehlender CC: Name, Ersteller, Beschreibung,
+    bibliothek – je Bibliotheks-Eintrag (Haushalt, Grundstück, Raum) mit fehlender CC: Name, Ersteller, Beschreibung,
                  Links aus der Beschreibung, Suchlink und die fehlenden Teile"""
     collector = MissingCollector(known)
     tray_items = read_tray_items(tray_folder) if tray_folder else {}
@@ -366,6 +421,7 @@ def find_missing(save_paths, tray_folder, known, progress=None):
         if progress:
             progress("Fehlende CC: Bibliothek")
         scan_tray(tray_folder, collector, tray_items)
+        scan_lots(tray_folder, collector, tray_items)
     parts = collector.result()
 
     households = {}

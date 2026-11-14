@@ -22,6 +22,7 @@ zusammen mit der Liste aller Commits seit dem letzten Release.
 - Trefferlisten mit Vorschaubild für Quellen, die echte Ergebnisse liefern (Voll-Quellen); Quellen können Seiten über den eingebauten Browser mit JavaScript laden lassen (`session.render`).
 - Login-Manager: Anmelden im sichtbaren Browser-Fenster (inklusive Zwei-Faktor und Captchas von Hand); gespeichert werden nur die Cookies, verschlüsselt mit AES-256-GCM, Schlüssel durch das Windows-Benutzerkonto (DPAPI) geschützt. Der Browser selbst schreibt keine Cookies auf die Platte.
 - Datenbank-Erweiterung: neben SQLite auch MySQL/MariaDB und PostgreSQL (Treiber selbst installieren), Befehl `db` prüft die Verbindung.
+- Bibliothek: Grundstücke und Räume (.blueprint/.room) werden entschlüsselt – Snappy-komprimiert, darin jedes platzierte Objekt mit seiner Objektdefinition. Fehlende CC-Objekte erscheinen unter dem Grundstück bzw. Raum, platzierte CC zählt als „genutzt“.
 - Oberfläche auf Deutsch und Englisch (Einstellungen → Sprache, „automatisch“ = Windows-Sprache).
 
 ### Bugfixes

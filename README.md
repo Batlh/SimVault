@@ -22,7 +22,7 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 ## 🚀 Features (working)
 
 - 🖥️ **Program window (Qt/PySide6)** — overview, mods table with filter and **preview images from the
-  packages** (with transparency), missing CC with library households, CC search with restore, backups,
+  packages** (with transparency), missing CC with library households, lots and rooms, CC search with restore, backups,
   sources and settings — long tasks run in the background with progress and a cancel button.
 
 - 🧭 **Sources & extensions** — all web sources (TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab,
@@ -72,8 +72,13 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   - **not provable** — tuning/gameplay mods that aren't always stored in the save
   - **not checkable** — script mods
 
+- 🏠 **Library lots & rooms** — `.blueprint`/`.room` files are decoded: an 8-byte header, then a
+  **Snappy**-compressed block (`0xFEA1BAAD`, protobuf with every placed object — field 15 is the object
+  definition — followed by the `LDNB` build data). Placed CC objects count as "used", missing ones show up
+  under the lot or room in *Missing CC*.
+
 - 🧩 **Missing CC Detection** — finds CAS parts and objects that are used in savegames or in
-  saved library households but are no longer installed, and shows who uses them
+  saved library households, **lots and rooms** but are no longer installed, and shows who uses them
   (Sim names, households, lots, library entries) and what kind of part it is
   (hair, top, shoes, lipstick … from the outfit's body-type slot). EA content is recognized by
   its smaller IDs; if the game folder is found (or set as `game_folder`), all game IDs are excluded as well.
@@ -136,8 +141,6 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 
 ## 🗺️ Roadmap (planned)
 
-- 🔎 **Missing CC Detection for library lots & rooms** — `.blueprint`/`.room` hold the lot as a protobuf that is
-  packed with an LZ-style compression of its own (not zlib, Snappy or RefPack); not decoded yet
 - 🌐 **CC Search Engine: result lists from the big sites** — the program side is done (result list with images,
   download, built-in browser for JavaScript pages via `session.render()`); what is missing are the parsers for
   TSR, CurseForge, ModTheSims, Tumblr, Patreon, LoversLab, SexySims and NewSea themselves. They can be added

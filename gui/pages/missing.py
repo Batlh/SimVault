@@ -1,5 +1,5 @@
 # Seite: Fehlende CC – Teile, die verwendet werden, aber nicht installiert sind,
-#        und die Bibliotheks-Haushalte mit Ersteller, Beschreibung und Links
+#        und die Bibliotheks-Einträge (Haushalte, Grundstücke, Räume) mit Ersteller, Beschreibung und Links
 
 import html
 
@@ -32,7 +32,7 @@ class MissingPage(QWidget):
         pl = QVBoxLayout(parts)
         top = QHBoxLayout()
         self.filter = QLineEdit()
-        self.filter.setPlaceholderText("Filtern (ID, Art, Sim, Haushalt …)")
+        self.filter.setPlaceholderText("Filtern (ID, Art, Sim, Haushalt, Grundstück …)")
         search_btn = QPushButton("Auf dem PC suchen")
         search_btn.setObjectName("Primary")
         search_btn.clicked.connect(lambda: self.navigate.emit("CC-Suche"))
@@ -131,7 +131,7 @@ class MissingPage(QWidget):
             f"<p><b>Fehlt:</b> {html.escape(', '.join(f'{n}× {a}' for a, n in arts.most_common()))}</p>"
             f"<p>{desc}</p>"
             f"<p><a href='simvault:suche'>In SimVault im Netz suchen</a> · "
-            f"<a href='{html.escape(h['suche'])}'>Google-Suche nach Haushalt und CC</a></p>"
+            f"<a href='{html.escape(h['suche'])}'>Google-Suche nach Eintrag und CC</a></p>"
             "<p style='color:#8b949e'>Links öffnen sich im eingebauten Browser – was du dort herunterlädst, "
             "installiert SimVault gleich.</p>")
 

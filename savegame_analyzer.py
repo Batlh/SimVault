@@ -198,7 +198,13 @@ def ids_in_tray(tray_folder, known):
                 data = f.read()
         except OSError:
             continue
-        if data[:4] == dbpf.DBPF_MAGIC:
+        if path.lower().endswith((".blueprint", ".room")):
+            from missing_cc import lot_objects       # Grundstücke/Räume sind Snappy-komprimiert
+            try:
+                ids = set(lot_objects(data)) & set(known)
+            except ValueError:
+                ids = set()
+        elif data[:4] == dbpf.DBPF_MAGIC:
             try:
                 ids = ids_in_save(path, known)
             except dbpf.DBPFError:

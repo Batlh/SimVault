@@ -1832,3 +1832,108 @@ class TranslationTests(unittest.TestCase):
         i18n.translate_widget(root)
         i18n.translate_widget(root)
         self.assertEqual(label.text(), "Clean up (5)")
+
+
+# --- Bibliothek: Grundstücke und Räume (.blueprint/.room, Snappy) ----------------------
+
+def snappy_compress(raw):
+    """Kleiner Snappy-Packer für Tests: Literale plus Rückverweise auf wiederholte 8-Byte-Blöcke."""
+    out = bytearray(varint(len(raw)))
+    pos, lit_start, seen = 0, 0, {}
+
+    def literal(chunk):
+        while chunk:
+            part, chunk = chunk[:60], chunk[60:]
+            out.append((len(part) - 1) << 2)
+            out.extend(part)
+
+    while pos + 8 <= len(raw):
+        key = raw[pos:pos + 8]
+        prev = seen.get(key)
+        seen[key] = pos
+        if prev is not None and pos - prev < 65536:
+            length = 8
+            while pos + length < len(raw) and length < 64 and raw[prev + length] == raw[pos + length]:
+                length += 1
+            literal(raw[lit_start:pos])
+            out.append(((length - 1) << 2) | 2)
+            out.extend((pos - prev).to_bytes(2, "little"))
+            pos += length
+            lit_start = pos
+        else:
+            pos += 1
+    literal(raw[lit_start:])
+    return bytes(out)
+
+
+def make_lot(definitions):
+    """Baut eine .blueprint-Datei wie das Spiel: Kopf, Snappy, Kennung, Protobuf mit Objekten, LDNB-Teil."""
+    proto = f_varint(1, 961473792)
+    for i, definition in enumerate(definitions):
+        obj = f_varint(1, 0x068A014C00000000 + i) + f_bytes(3, f_bytes(1, b"\x0d\x00\x00\x30\x41" * 3))
+        obj += f_varint(15, definition)
+        proto += f_bytes(2, obj)
+    raw = struct.pack("<III", 0xFEA1BAAD, 1, len(proto)) + proto + b"\x01\x00\x00\x00" * 2 + b"LDNB" + b"\x00" * 300
+    packed = snappy_compress(raw)
+    return struct.pack("<II", 1, len(packed)) + packed
+
+
+class LotTests(unittest.TestCase):
+    def test_snappy_roundtrip_and_errors(self):
+        raw = b"abcdefgh" * 50 + bytes(range(256)) + b"xyz" * 40
+        self.assertEqual(dbpf.snappy_decompress(snappy_compress(raw)), raw)
+        # überlappender Rückverweis (Offset 1 = Byte wiederholen), Literal mit 1-Byte-Länge
+        data = varint(70) + bytes([0 << 2]) + b"a" + bytes([((64 - 1) << 2) | 2]) + (1).to_bytes(2, "little") \
+            + bytes([((4 - 1) << 2) | 2]) + (1).to_bytes(2, "little") + bytes([0 << 2]) + b"b"
+        self.assertEqual(dbpf.snappy_decompress(data), b"a" * 69 + b"b")
+        long_lit = bytes([60 << 2, 99]) + bytes(range(100))          # Länge 100 in einem Extra-Byte
+        self.assertEqual(dbpf.snappy_decompress(varint(100) + long_lit), bytes(range(100)))
+        with self.assertRaises(dbpf.DBPFError):
+            dbpf.snappy_decompress(varint(10) + bytes([((4 - 1) << 2) | 2]) + (5).to_bytes(2, "little"))
+        with self.assertRaises(dbpf.DBPFError):
+            dbpf.snappy_decompress(varint(50) + bytes([3 << 2]) + b"abcd")
+
+    def test_lot_objects_and_missing_cc(self):
+        import missing_cc
+        cc_installed, cc_missing, ea = 0xC9C02F68F16F69D9, 0x2A1452E9643E80AB, 26030
+        tmp = tempfile.mkdtemp()
+        try:
+            tray = os.path.join(tmp, "Tray")
+            os.makedirs(tray)
+            lot = make_lot([cc_installed, cc_missing, cc_missing, ea, ea])
+            with open(os.path.join(tray, "0x00000000!0x068a014ca9912b84.blueprint"), "wb") as f:
+                f.write(lot)
+            trayitem = (b"\x00" * 8 + f_varint(2, 2) + f_bytes(4, "Circular2".encode()) + f_bytes(7, b"autaki"))
+            with open(os.path.join(tray, "0x00000002!0x068a014ca9912b84.trayitem"), "wb") as f:
+                f.write(trayitem)
+            with open(os.path.join(tray, "0x00000000!0x0000000000000abc.room"), "wb") as f:
+                f.write(make_lot([cc_missing]))
+            with open(os.path.join(tray, "0x00000000!0x0000000000000def.blueprint"), "wb") as f:
+                f.write(b"\x01\x00\x00\x00kaputt")                    # kaputte Datei bricht nichts ab
+
+            self.assertEqual(missing_cc.lot_objects(lot), {cc_installed: 1, cc_missing: 2, ea: 2})
+            result = missing_cc.find_missing([], tray, {cc_installed})
+            self.assertEqual([p["id"] for p in result["teile"]], [f"0x{cc_missing:016X}"])
+            part = result["teile"][0]
+            self.assertEqual((part["art"], part["anzahl"]), ("Objekt", 3))
+            self.assertIn("Bibliothek „Circular2“: Grundstück (2×)", part["verwendet_von"])
+            lots = {h["name"]: h for h in result["bibliothek"]}
+            self.assertEqual((lots["Circular2"]["typ"], lots["Circular2"]["ersteller"]), ("Grundstück", "autaki"))
+            self.assertEqual(len(lots["Circular2"]["fehlend"]), 1)
+            self.assertEqual(lots["0x0000000000000abc"]["typ"], "Raum")      # Raum ohne .trayitem
+
+            used = savegame_analyzer.ids_in_tray(tray, {cc_installed, cc_missing})
+            self.assertEqual(used, {cc_installed: 1, cc_missing: 2})       # 1 Grundstück + 1 Raum
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_real_blueprint_if_available(self):
+        import glob
+        import missing_cc
+        files = glob.glob("/mnt/user-data/uploads/Die Sims 4/Tray/*.blueprint")
+        if not files:
+            self.skipTest("keine echten Bibliotheks-Dateien vorhanden")
+        for path in files:
+            with open(path, "rb") as f:
+                objects = missing_cc.lot_objects(f.read())
+            self.assertGreater(sum(objects.values()), 100)
