@@ -2197,6 +2197,8 @@ class NewSeaTests(unittest.TestCase):
         self.assertEqual(Session.calls, calls)                       # zweite Suche aus dem Zwischenspeicher
         self.assertEqual(src.search("newsea hair", Session()), [])   # nur Füllwörter
         self.assertEqual(src.download_urls(found[0]), [])
+        self.assertEqual(src.login_url, "http://www.newseasims.com/")      # Anmeldung möglich, nicht Pflicht
+        self.assertFalse(src.needs_login)
 
 
 SEXYSIMS_PAGE = """<div class="row cf" id="masonrycontainer"><div class="span12"><div class="downloadblock">

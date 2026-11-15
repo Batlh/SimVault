@@ -406,11 +406,15 @@ class Tumblr(Source):
 class NewSea(Source):
     """NewSea (nur http): keine Suchfunktion, nur Listen. SimVault liest den Sims-4-Katalog (Frisuren,
     Accessoires, Make-up – rund 500 Einträge) einmal ein, merkt ihn sich eine Woche und sucht darin selbst.
-    Die Datei-Links (downfile.php) liefern ohne Browser nichts – heruntergeladen wird im eingebauten Browser."""
+    Die Datei-Links (downfile.php) liefern ohne Browser nichts – heruntergeladen wird im eingebauten Browser.
+    Anmelden geht über das Formular auf der Startseite (mit Bild-Code); mit Konto gibt es auch die
+    „Donate“-Frisuren. Die Anmeldung speichert SimVault wie bei allen Seiten verschlüsselt."""
     id = "newsea"
     name = "NewSea"
     homepage = "http://www.newseasims.com"
-    description = "Frisuren von NewSea. Durchsucht den Sims-4-Katalog der Seite (wird eine Woche zwischengespeichert)."
+    login_url = "http://www.newseasims.com/"         # Anmeldeformular sitzt auf der Startseite
+    description = ("Frisuren von NewSea. Durchsucht den Sims-4-Katalog der Seite (wird eine Woche zwischengespeichert). "
+                   "Mit Konto: unter „Quellen“ anmelden, dann gehen auch die Donate-Frisuren.")
     base = "http://www.newseasims.com"
     sections = ((1, 15), (2, 16), (3, 12))          # Sims-4-Frisuren, -Accessoires, -Make-up
     max_pages = 60
