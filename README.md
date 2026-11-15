@@ -144,6 +144,8 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 - 🌐 **More result lists** — Patreon's search only finds creators, Simsworkshop's Cloudflare "are you human"
   check loops endlessly and Around the Sims has no search: these stay search links that open in the built-in browser (downloads there are still installed automatically). More sites can be added as full
   sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
+- 🐞 **Debug log & bug reports** — log file, crash catcher and a "Report a bug" button that opens a pre-filled,
+  anonymised GitHub issue (plan: [`docs/plan-fehlerberichte.md`](docs/plan-fehlerberichte.md))
 - 📱 **Mobile App** for remote analysis
 - 🌍 **More languages** — window, command line and reports speak German and English; the detailed explanations
   from the analysis (conflict recommendations, repair hints, install reasons) are still German. Another language
