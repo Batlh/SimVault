@@ -141,9 +141,9 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 
 ## 🗺️ Roadmap (planned)
 
-- 🌐 **More result lists** — The Sims Resource, CurseForge and ModTheSims deliver real result lists (done);
-  Tumblr, Patreon, LoversLab and SexySims only show results when logged in and stay search links that open in
-  the built-in browser (downloads there are still installed automatically). More sites can be added as full
+- 🌐 **More result lists** — Patreon, LoversLab and SexySims only show results when logged in, Simsworkshop
+  has a Cloudflare "are you human" check and Around the Sims has no search: these stay search links that open
+  in the built-in browser (downloads there are still installed automatically). More sites can be added as full
   sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
 - 🛡️ **Captcha automation** — captchas are solved by hand in the built-in browser (done); automation optional later
 - 📱 **Mobile App** for remote analysis
@@ -159,8 +159,11 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   script mods to `Mods/SimVault_heruntergeladen/` (they only load one folder deep), library files (Sims, lots,
   rooms) to `Tray/`. ZIP, RAR and 7z (also nested) are unpacked. Already installed CC (all CAS parts are in the
   Mods folder, or the same file is already there) and broken files are skipped; nothing is ever overwritten.
-- **Result lists** from **The Sims Resource, CurseForge and ModTheSims** (and any full source in `plugins/`):
-  title, preview image, creator and description. ModTheSims files are downloaded directly (every file of the
+- **Result lists** from **The Sims Resource, CurseForge, ModTheSims, Sims Finds, Tumblr, Sims 4 Updates,
+  The Sims Catalog and NewSea** (and any full source in `plugins/`): title, preview image, creator and description.
+  Tumblr results carry the download links from the post (SimFileShare, Mediafire, Patreon …, real file hosts
+  first). NewSea has no search of its own: SimVault reads its Sims 4 catalog (~500 entries) once a week and
+  searches it locally. ModTheSims files are downloaded directly (every file of the
   download); TSR and CurseForge start their download on the site (waiting time / countdown), so SimVault opens
   that page in the built-in browser and installs the file as soon as it arrives. *Download and install* fetches the file — if the site answers with a page instead (login, captcha,
   waiting time), it is opened in the built-in browser. Full sources can use `session.render(url)` to get the

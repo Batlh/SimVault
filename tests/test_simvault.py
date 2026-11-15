@@ -1629,8 +1629,9 @@ class WebSearchTests(unittest.TestCase):
                         def search(self, query, session=None):
                             raise OSError("Seite antwortet nicht")
                 '''))
-            cfg = {"plugin_folders": [tmp], "sources_enabled": {"tsr": False, "curseforge": False,
-                                                                 "modthesims": False}}
+            from sources.builtin import builtin_sources
+            off = {src.id: False for src in builtin_sources() if src.can_search}    # nur die Testquellen
+            cfg = {"plugin_folders": [tmp], "sources_enabled": off}
             results, links, errors = core.web_search(cfg, "Kijiko", session=core.web_session(cfg))
             self.assertEqual([(r.title, r.creator, r.extra["bild"]) for r in results],
                              [("Kijiko Wimpern", "Kijiko", b"\xff\xd8bild1"),
@@ -2048,3 +2049,151 @@ class SiteParserTests(unittest.TestCase):
                          extra={"download_seite": "https://www.curseforge.com/sims4/create-a-sim/x/download/1"})
         self.assertEqual(core.download_result(cfg, r, session=object()),
                          (None, "https://www.curseforge.com/sims4/create-a-sim/x/download/1"))
+
+
+SIMSFINDS_PAGE = """<div class="_x1 _ptfcreations-item" data-item-id="407566" itemprop="itemListElement" itemscope>
+<meta itemprop="position" content="1"><div class="_q9z _ellipsis" itemprop="name">3D Eyelashes: Pretty Princess by Learxfl</div>
+<figure data-id="407566"><a class="_k3 _ptfdownload-link" href="https://www.simsfinds.com/downloads/407566/3d-eyelashes-sims4"
+title="3D Eyelashes for The Sims 4" itemprop="url"><img src="https://img.simsfinds.com.br/d/1-gnd.jpg" alt="x" itemprop="image"></a>
+</figure><div><a class="_z" data-type="hashtag" href="/en/downloads/sims4/eyelashes-802">#eyelashes</a>
+<a data-type="type" href="/x">#alpha</a></div></div>
+<div class="_x2" data-item-id="1" itemprop="itemListElement"><div itemprop="name">Ohne Link</div></div>"""
+
+WP_PAGE = """<article class="post-1 post entry" aria-label="x"><div class="entry-content"><h2 class="entry-title">
+<a class="entry-title-link" rel="bookmark" href="https://sims4updates.net/accessories/lashes-by-coffeemoon-at-tsr/">Thick lashes
+by coffeemoon at TSR</a></h2><a class="entry-image-link" href="#"><img src="data:image/png;base64,AAAA"
+class="post-image entry-image lazyload" data-src="https://sims4updates.net/wp-content/uploads/61-1.jpg" /></a>
+<p>Filed Under: Accessories</p><p>Dicke Wimpern für Männer</p></div></article>
+<div class="post-single-col-grid row"><a href="https://thesimscatalog.com/sims4/downloads/star/" class="post-thumbnail">
+<img width="265" src="https://thesimscatalog.com/sims4/wp-content/uploads/Star.jpg" class="media-object wp-post-image"></a>
+<h2 class="post-title"><a href="https://thesimscatalog.com/sims4/downloads/star/">Star Eyelashes 3D</a></h2>
+<ul class="meta"><li class="post-author">Posted By : <a href="/author/tsr/" rel="author">The Sims Resource</a></li></ul></div>"""
+
+
+def tumblr_page(posts):
+    state = {"routeSet": "main", "queries": {"queries": [{"state": {"data": {"pages": [{"items": posts}]}}}]}}
+    return ('<html><script type="application/json" id="___INITIAL_STATE___">'
+            + html_escape(json.dumps(state)) + "</script></html>")
+
+
+def html_escape(value):
+    import html
+    return html.escape(value, quote=False)
+
+
+class MoreSiteParserTests(unittest.TestCase):
+    def test_simsfinds(self):
+        from sources.sites import SimsFinds
+        src = SimsFinds()
+        results = src.parse(SIMSFINDS_PAGE)
+        self.assertEqual(len(results), 1)
+        r = results[0]
+        self.assertEqual((r.title, r.creator), ("3D Eyelashes: Pretty Princess by Learxfl", "Learxfl"))
+        self.assertEqual(r.url, "https://www.simsfinds.com/downloads/407566/3d-eyelashes-sims4")
+        self.assertEqual(r.image_url, "https://img.simsfinds.com.br/d/1-gnd.jpg")
+        self.assertEqual(r.description, "#eyelashes")
+        self.assertEqual(src.search_url("Kijiko Eye-lash!"), "https://www.simsfinds.com/results/sims4-kijiko-eye-lash")
+        self.assertEqual(src.download_urls(r), [])
+
+    def test_wordpress_both_layouts(self):
+        from sources.sites import Sims4Updates, TheSimsCatalog
+        updates = Sims4Updates().parse(WP_PAGE)
+        self.assertEqual([(r.title, r.creator) for r in updates],
+                         [("Thick lashes by coffeemoon at TSR", "coffeemoon"), ("Star Eyelashes 3D", "The Sims Resource")])
+        self.assertEqual(updates[0].image_url, "https://sims4updates.net/wp-content/uploads/61-1.jpg")
+        self.assertEqual(updates[0].description, "Dicke Wimpern für Männer")
+        self.assertEqual(updates[1].image_url, "https://thesimscatalog.com/sims4/wp-content/uploads/Star.jpg")
+        self.assertEqual(TheSimsCatalog().search_url("3d lashes"), "https://thesimscatalog.com/sims4/?s=3d+lashes")
+
+    def test_wordpress_falls_back_to_longest_word(self):
+        from sources.sites import Sims4Updates
+
+        class Session:
+            renderer = None
+            asked = []
+
+            def get(self, url):
+                self.asked.append(url)
+                return WP_PAGE if url.endswith("?s=coffeemoon") else "<html>Nothing found</html>"
+
+        found = Sims4Updates().search("TSR coffeemoon", Session())
+        self.assertEqual(len(found), 2)
+        self.assertEqual(Session.asked, ["https://sims4updates.net/?s=TSR+coffeemoon",
+                                         "https://sims4updates.net/?s=coffeemoon"])
+
+    def test_tumblr_state_json(self):
+        from sources.sites import Tumblr
+        posts = [
+            {"objectType": "post", "blogName": "veneriancc", "postUrl": "https://veneriancc.tumblr.com/post/1/douyin",
+             "summary": "Douyin Eyelashes", "isNsfw": False, "content": [
+                 {"type": "image", "media": [{"url": "https://64.media.tumblr.com/big.jpg", "width": 1280},
+                                             {"url": "https://64.media.tumblr.com/mid.jpg", "width": 540}]},
+                 {"type": "text", "text": "Douyin Eyelashes"},
+                 {"type": "text", "text": "6 Varianten <Download>", "formatting": [
+                     {"type": "link", "url": "https://www.patreon.com/posts/douyin-135696685"},
+                     {"type": "link", "url": "http://www.simfileshare.net/download/5660449/"},
+                     {"type": "link", "url": "https://buymeacoffee.com/Venerian"}]}]},
+            {"objectType": "post", "blogName": "rebloggerin", "postUrl": "https://rebloggerin.tumblr.com/post/2",
+             "summary": "", "slug": "reblog", "content": [], "trail": [{"content": [
+                 {"type": "text", "text": "Haare von jemand anderem"},
+                 {"type": "link", "url": "https://www.mediafire.com/file/abc/Haare.zip"}]}]},
+        ]
+        src = Tumblr()
+        results = src.parse(tumblr_page(posts))
+        self.assertEqual([(r.title, r.creator) for r in results],
+                         [("Douyin Eyelashes", "veneriancc"), ("Haare von jemand anderem", "rebloggerin")])
+        first_post = results[0]
+        self.assertEqual(first_post.image_url, "https://64.media.tumblr.com/mid.jpg")
+        self.assertEqual(first_post.extra["links"], ["http://www.simfileshare.net/download/5660449/",
+                                                     "https://www.patreon.com/posts/douyin-135696685"])
+        self.assertEqual(first_post.extra["download_seite"], "http://www.simfileshare.net/download/5660449/")
+        self.assertEqual(src.download_urls(first_post), ["http://www.simfileshare.net/download/5660449/"])
+        self.assertEqual(results[1].extra["download_seite"], "https://www.mediafire.com/file/abc/Haare.zip")
+        self.assertEqual(src.search_url("Kijiko eyelash"), "https://www.tumblr.com/search/sims%204%20Kijiko%20eyelash")
+        self.assertEqual(src.parse("<html>kein JSON</html>"), [])
+
+
+NEWSEA_LIST = """<ul><li><table class="p-title" width="370px"><tr class="border-bottom"><td colspan="2">StarfoldSweet+</td>
+<td align="right"><img src="images/down_ico3.gif" alt="down" /><span>7</span></td></tr></table>
+<div><a href="inside-page.php?cid=1&id=1111"><img src="imagefile/suoli/1786385059.jpg" alt="StarfoldSweet+" /></a></div>
+<table><tr><td>By newsea</td><td align="right"><a href="inside-page.php?cid=1&id=1111">Show Details</a></td></tr></table></li>
+<li><table class="p-title"><tr><td colspan="2">CitrusMousse</td></tr></table>
+<div><a href="inside-page.php?cid=1&amp;id=1110"><img src="imagefile/suoli/2.jpg" alt="CitrusMousse" /></a></div></li></ul>"""
+
+
+class NewSeaTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.old = {k: os.environ.get(k) for k in ("APPDATA", "HOME")}
+        os.environ["APPDATA"] = os.environ["HOME"] = self.tmp
+
+    def tearDown(self):
+        for k, v in self.old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(self.tmp)
+
+    def test_catalog_search_and_cache(self):
+        from sources.sites import NewSea
+
+        class Session:
+            renderer = None
+            calls = 0
+
+            def get(self, url):
+                Session.calls += 1
+                return NEWSEA_LIST if "page=1&cid=1&sid=15" in url else "<html></html>"
+
+        src = NewSea()
+        self.assertEqual(src.parse_list(NEWSEA_LIST)[1]["url"], "http://www.newseasims.com/inside-page.php?cid=1&id=1110")
+        found = src.search("Newsea StarfoldSweet", Session())
+        self.assertEqual([(r.title, r.creator) for r in found], [("StarfoldSweet+", "newsea")])
+        self.assertEqual(found[0].image_url, "http://www.newseasims.com/imagefile/suoli/1786385059.jpg")
+        self.assertEqual(found[0].url, "http://www.newseasims.com/inside-page.php?cid=1&id=1111")
+        calls = Session.calls
+        self.assertEqual([r.title for r in src.search("citrus mousse", Session())], ["CitrusMousse"])
+        self.assertEqual(Session.calls, calls)                       # zweite Suche aus dem Zwischenspeicher
+        self.assertEqual(src.search("newsea hair", Session()), [])   # nur Füllwörter
+        self.assertEqual(src.download_urls(found[0]), [])

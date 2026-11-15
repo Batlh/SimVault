@@ -198,3 +198,293 @@ class ModTheSims(Source):
             if link not in urls:
                 urls.append(link)
         return urls
+
+
+def _split_words(query):
+    return [w for w in re.split(r"[\s_\-]+", query.strip()) if w]
+
+
+class SimsFinds(Source):
+    """Sims Finds: Suche als /results/sims4-<begriffe> (Wörter mit Bindestrich). Die CSS-Klassen der Seite sind
+    verschlüsselt – gelesen wird über die schema.org-Angaben (itemprop name/url/image), die bleiben stabil.
+    Mehrere Wörter finden dort oft nichts, deshalb danach die einzelnen Wörter."""
+    id = "simsfinds"
+    name = "Sims Finds"
+    homepage = "https://www.simsfinds.com"
+    description = "Große CC-Sammlung. Treffer mit Bild; heruntergeladen wird im eingebauten Browser (Wartezeit)."
+    base = "https://www.simsfinds.com"
+
+    def search_url(self, query):
+        slug = "-".join(re.sub(r"[^a-z0-9]+", "", w.lower()) for w in _split_words(query))
+        return f"{self.base}/results/sims4-{slug}" if slug else ""
+
+    def search(self, query, session=None):
+        words = _split_words(query)
+        urls = [self.search_url(query)] + ([self.search_url(w) for w in words if len(w) >= 4] if len(words) > 1 else [])
+        seen, results = set(), []
+        for url in urls:
+            for r in self.parse(fetch(session, url)):
+                if r.url not in seen:
+                    seen.add(r.url)
+                    results.append(r)
+            if len(results) >= 10:
+                break
+        return results[:MAX_RESULTS]
+
+    def parse(self, page):
+        results = []
+        for chunk in re.split(r'(?=<div[^>]*itemprop=["\']itemListElement)', page)[1:MAX_RESULTS + 1]:
+            href = first(r'<a[^>]*href=Q(V/downloads/\d+/V)Q', chunk)
+            if not href:
+                continue
+            title = text(first(r'itemprop=QnameQ[^>]*>(.*?)</', chunk)) or text(first(r'<a[^>]*title=Q(V)Q', chunk))
+            results.append(SearchResult(
+                title=title, url=urljoin(self.base, href), source_id=self.id,
+                image_url=first(r'<img[^>]*src=Q(https?://V)Q', chunk),
+                creator=text(first(r"\bby ([^<]{2,40})$", title)),
+                description=" ".join(text(t) for t in re.findall(r'data-type=["\']hashtag[^>]*>([^<]+)<', chunk, re.I)) or ""))
+        return results
+
+    def download_urls(self, result, session=None):
+        return []                                   # Download-Knopf mit Wartezeit -> eingebauter Browser
+
+
+class WordPressSite(Source):
+    """CC-Seiten auf WordPress (?s=Suche). Versteht die üblichen Vorlagen: <article> mit entry-title
+    (Sims 4 Updates und viele Blogs) und Listen mit post-title / wp-post-image (The Sims Catalog)."""
+    base = ""
+    search_path = "/"
+
+    def search_url(self, query):
+        return f"{self.base}{self.search_path}?s={quote_plus(query.strip())}"
+
+    def search(self, query, session=None):
+        results = self.parse(fetch(session, self.search_url(query)))
+        words = _split_words(query)
+        if not results and len(words) > 1:          # WordPress sucht mit UND – ohne Treffer: längstes Wort
+            results = self.parse(fetch(session, self.search_url(max(words, key=len))))
+        return results
+
+    def parse(self, page):
+        results = []
+        chunks = re.split(r'(?=<article\b|<div[^>]*class=["\'][^"\']*post-single-col-grid)', page)[1:]
+        for chunk in chunks[:MAX_RESULTS]:
+            href = first(r'class=Q(?:entry-title|post-title)VQ[^>]*>\s*<a[^>]*href=Q(V)Q', chunk) or \
+                first(r'<a[^>]*class=Qentry-title-linkQ[^>]*href=Q(V)Q', chunk)
+            if not href:
+                continue
+            title = text(first(r'class=Q(?:entry-title|post-title)VQ[^>]*>\s*<a[^>]*>(.*?)</a>', chunk))
+            image = first(r'<img[^>]*data-src=Q(https?://V)Q', chunk) or \
+                first(r'<img(?=[^>]*(?:wp-post-image|entry-image|post-image))[^>]*src=Q(https?://V)Q', chunk)
+            creator = text(first(r'rel=QauthorQ[^>]*>(.*?)</a>', chunk)) or \
+                text(first(r"\bby ([^<]{2,40}?)(?: at [^<]{2,30})?$", title))
+            paragraphs = [text(p) for p in re.findall(r"<p[^>]*>(.*?)</p>", chunk, re.S | re.I)]
+            description = next((p for p in paragraphs if p and not p.startswith(("Filed Under", "Tagged", "Posted"))), "")
+            results.append(SearchResult(title=title, url=urljoin(self.base, href), source_id=self.id,
+                                        image_url=image, creator=creator, description=description[:300]))
+        return results
+
+    def download_urls(self, result, session=None):
+        return []                                   # Beiträge verlinken auf die Originalseite -> Browser
+
+
+class Sims4Updates(WordPressSite):
+    id = "sims4updates"
+    name = "Sims 4 Updates"
+    homepage = "https://sims4updates.net"
+    description = "Sammelt CC von vielen Seiten (TSR, Tumblr, Patreon …) – verlinkt auf das Original."
+    base = "https://sims4updates.net"
+
+
+class TheSimsCatalog(WordPressSite):
+    id = "simscatalog"
+    name = "The Sims Catalog"
+    homepage = "https://thesimscatalog.com/sims4/"
+    description = "CC-Katalog mit Links zur Originalseite."
+    base = "https://thesimscatalog.com"
+    search_path = "/sims4/"
+
+
+# Wo Creator ihre Dateien ablegen – in dieser Reihenfolge bevorzugt (echte Datei-Hoster vor Patreon-Seiten)
+FILE_HOSTS = ("simfileshare.net", "mediafire.com", "drive.google.com", "dropbox.com", "mega.nz",
+              "sims4studio.com", "curseforge.com", "thesimsresource.com", "modthesims.info",
+              "patreon.com/posts", "patreon.com")
+
+
+def _host_rank(url):
+    low = url.lower()
+    return next((i for i, h in enumerate(FILE_HOSTS) if h in low), len(FILE_HOSTS))
+
+
+class Tumblr(Source):
+    """Tumblr: Die Suchseite enthält alle Treffer als JSON (<script id="___INITIAL_STATE___">) – mit Blog,
+    Post-Link, Bildern und den Links im Text (meist SimFileShare, Patreon, Google Drive …)."""
+    id = "tumblr"
+    name = "Tumblr"
+    homepage = "https://www.tumblr.com"
+    login_url = "https://www.tumblr.com/login"
+    description = "Viele Creator veröffentlichen hier. Treffer mit Bild und den Download-Links aus dem Beitrag."
+    base = "https://www.tumblr.com"
+
+    def search_url(self, query):
+        q = query.strip()
+        if "sims" not in q.lower():
+            q = "sims 4 " + q
+        return f"{self.base}/search/{quote(q)}"
+
+    def search(self, query, session=None):
+        return self.parse(fetch(session, self.search_url(query)))
+
+    @staticmethod
+    def _posts(node, out, depth=0):
+        if depth > 14 or len(out) >= MAX_RESULTS:
+            return
+        if isinstance(node, dict):
+            if node.get("postUrl") and node.get("blogName") and "content" in node:
+                out.append(node)
+                return
+            for value in node.values():
+                Tumblr._posts(value, out, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                Tumblr._posts(value, out, depth + 1)
+
+    @staticmethod
+    def _blocks(post):
+        blocks = list(post.get("content") or [])
+        for entry in post.get("trail") or []:          # Reblogs: der Inhalt steckt im Verlauf
+            blocks += entry.get("content") or []
+        return blocks
+
+    def parse(self, page):
+        raw = first(r'<script[^>]*id=Q___INITIAL_STATE___Q[^>]*>(.*?)</script>', page)
+        try:
+            state = json.loads(htmlmod.unescape(raw.strip())) if raw else {}
+        except ValueError:
+            try:
+                state = json.loads(raw.strip())
+            except ValueError:
+                return []
+        posts = []
+        self._posts(state, posts)
+        results, seen = [], set()
+        for post in posts:
+            if post["postUrl"] in seen:
+                continue
+            seen.add(post["postUrl"])
+            blocks = self._blocks(post)
+            image, texts, links = "", [], []
+            for block in blocks:
+                if block.get("type") == "image" and not image:
+                    media = [m for m in block.get("media") or [] if m.get("url")]
+                    fitting = [m for m in media if 300 <= (m.get("width") or 0) <= 700]
+                    image = (fitting or media or [{}])[0].get("url", "")
+                elif block.get("type") == "text":
+                    texts.append(block.get("text") or "")
+                    for fmt in block.get("formatting") or []:
+                        if fmt.get("type") == "link" and fmt.get("url"):
+                            links.append(fmt["url"])
+                elif block.get("type") == "link" and block.get("url"):
+                    links.append(block["url"])
+            files = sorted(dict.fromkeys(u for u in links if _host_rank(u) < len(FILE_HOSTS)), key=_host_rank)
+            title = (post.get("summary") or (texts[0] if texts else "") or post.get("slug", "")).strip()
+            results.append(SearchResult(
+                title=title.splitlines()[0][:120] if title else post["blogName"], url=post["postUrl"],
+                source_id=self.id, image_url=image, creator=post["blogName"],
+                description=" ".join(t for t in texts[1:4] if t)[:300],
+                extra={"links": files, "download_seite": files[0] if files else post["postUrl"],
+                       "nsfw": bool(post.get("isNsfw"))}))
+        return results
+
+    def download_urls(self, result, session=None):
+        """Direkt ladbare Datei-Links aus dem Beitrag (SimFileShare & Co.). Liefert ein Link eine Seite statt der
+        Datei, öffnet SimVault die Seite im eingebauten Browser."""
+        return [u for u in result.extra.get("links", [])
+                if any(h in u.lower() for h in ("simfileshare.net/download", "dl.dropboxusercontent.com"))]
+
+
+class NewSea(Source):
+    """NewSea (nur http): keine Suchfunktion, nur Listen. SimVault liest den Sims-4-Katalog (Frisuren,
+    Accessoires, Make-up – rund 500 Einträge) einmal ein, merkt ihn sich eine Woche und sucht darin selbst.
+    Die Datei-Links (downfile.php) liefern ohne Browser nichts – heruntergeladen wird im eingebauten Browser."""
+    id = "newsea"
+    name = "NewSea"
+    homepage = "http://www.newseasims.com"
+    description = "Frisuren von NewSea. Durchsucht den Sims-4-Katalog der Seite (wird eine Woche zwischengespeichert)."
+    base = "http://www.newseasims.com"
+    sections = ((1, 15), (2, 16), (3, 12))          # Sims-4-Frisuren, -Accessoires, -Make-up
+    max_pages = 60
+    cache_days = 7
+    ignore_words = {"newsea", "sims", "sims4", "ts4", "4", "hair", "hairstyle", "cc"}
+
+    def search_url(self, query):
+        return f"https://www.google.com/search?q=site%3Anewseasims.com+sims+4+{quote_plus(query.strip())}"
+
+    def _cache_path(self):
+        import os
+        if os.name == "nt":
+            base = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "SimVault")
+        else:
+            base = os.path.join(os.path.expanduser("~"), ".config", "simvault")
+        return os.path.join(base, "cache", "newsea.json")
+
+    def parse_list(self, page):
+        items = []
+        for chunk in re.split(r"(?=<li\b)", page)[1:]:
+            href = first(r'href=Q(inside-page\.php\?[^"\']*?id=\d+)Q', chunk)
+            name = text(first(r'<td colspan=Q2Q[^>]*>(.*?)</td>', chunk)) or text(first(r'<img[^>]*alt=Q(V)Q', chunk))
+            if not href or not name:
+                continue
+            image = first(r'<img[^>]*src=Q(imagefile/V)Q', chunk)
+            items.append({"name": name, "url": urljoin(self.base + "/", htmlmod.unescape(href)),
+                          "image": urljoin(self.base + "/", image) if image else "",
+                          "creator": text(first(r"<td>\s*By ([^<]+)</td>", chunk)) or "newsea"})
+        return items
+
+    def catalog(self, session, refresh=False):
+        """Alle Sims-4-Einträge (aus dem Zwischenspeicher, falls jünger als eine Woche)."""
+        import os
+        import time
+        path = self._cache_path()
+        if not refresh:
+            try:
+                if time.time() - os.path.getmtime(path) < self.cache_days * 86400:
+                    with open(path, encoding="utf-8") as f:
+                        return json.load(f)
+            except (OSError, ValueError):
+                pass
+        items, seen = [], set()
+        for cid, sid in self.sections:
+            for page_no in range(1, self.max_pages + 1):
+                page = fetch(session, f"{self.base}/list-page.php?page={page_no}&cid={cid}&sid={sid}&model=")
+                new = [i for i in self.parse_list(page) if i["url"] not in seen]
+                if not new:
+                    break
+                for item in new:
+                    seen.add(item["url"])
+                items += new
+        if items:
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(items, f, ensure_ascii=False)
+            except OSError:
+                pass
+        return items
+
+    def search(self, query, session=None):
+        words = [w.lower() for w in re.split(r"[^A-Za-z0-9]+", query) if w and w.lower() not in self.ignore_words]
+        if not words:
+            return []
+        items = self.catalog(session)
+
+        def name_of(item):
+            return re.sub(r"[^a-z0-9]+", "", item["name"].lower())
+
+        hits = [i for i in items if all(w in name_of(i) for w in words)] or \
+            [i for i in items if any(len(w) >= 4 and w in name_of(i) for w in words)]
+        return [SearchResult(title=i["name"], url=i["url"], source_id=self.id, image_url=i["image"],
+                             creator=i["creator"]) for i in hits[:MAX_RESULTS]]
+
+    def download_urls(self, result, session=None):
+        return []
