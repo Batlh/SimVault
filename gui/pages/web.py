@@ -116,6 +116,7 @@ class WebPage(QWidget):
         self.tabs.currentChanged.connect(lambda i: self.ensure_browser() if self.tabs.widget(i) is self.browser_tab
                                          else None)
         state.web_search.connect(self.search_for)
+        state.show_checks.connect(lambda: self.tabs.setCurrentWidget(self.browser_tab))
         state.open_in_browser.connect(self.open_url)
         state.login_requested.connect(self.login)
         state.runner.busy_changed.connect(lambda busy: not busy and self._next_install())
@@ -139,6 +140,7 @@ class WebPage(QWidget):
         self.browser_core.download_progress.connect(self.state.message.emit)
         self.browser_core.download_blocked.connect(self._download_blocked)
         self.browser.check_passed.connect(self._check_passed)
+        self.browser.checks_changed.connect(self.state.checks_waiting.emit)
         self.browser.login_saved.connect(lambda sid, n: self.state.message.emit(
             f"Anmeldung gespeichert ({n} Cookies, verschlüsselt)." if n else "Keine Cookies zum Speichern."))
         if self.browser_core.load_error:

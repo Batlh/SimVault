@@ -54,6 +54,15 @@ def tr(text):
     return text
 
 
+def t(template, *args, **kwargs):
+    """Übersetzt eine Vorlage mit Platzhaltern und füllt sie: t("{} Dateien gefunden", 3).
+    Robuster als tr() auf einem fertigen Text, weil die Vorlage exakt im Katalog steht."""
+    if not (args or kwargs):
+        return tr(template)
+    text = template if _lang == "de" else CATALOGS.get(_lang, {}).get(template, template)
+    return text.format(*args, **kwargs)
+
+
 _compiled = {}
 
 
@@ -219,6 +228,10 @@ EN = {
     "Aus der Liste entfernen": "Remove from list", "Adresse oder Suchbegriff …": "Address or search term …",
     "Anmeldung speichern": "Save login",
     "Erneut suchen": "Search again",
+    "Captcha wartet": "Captcha waiting", "Captcha wartet: {} – jetzt lösen": "Captcha waiting: {} – solve now",
+    "{} will prüfen, ob du ein Mensch bist. Die Suche dort geht weiter, sobald du die Prüfung im eingebauten Browser gelöst hast.":
+        "{} wants to check that you are human. The search there continues as soon as you have solved the check in the built-in browser.",
+    "Jetzt lösen": "Solve now", "Später": "Later",
     "Prüfung gelöst? Dann bei dieser Quelle noch einmal suchen.": "Check solved? Then search this source again.",
     "Der Download läuft über die Seite – im Browser starten, SimVault installiert die Datei danach selbst.":
         "The download runs through the site – start it in the browser, SimVault installs the file afterwards.", "{} Treffer.": "{} results.", "Suche „{}“ …": "Searching “{}” …",

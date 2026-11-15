@@ -14,6 +14,8 @@ class AppState(QObject):
     web_search = Signal(str)        # im Netz suchen (Seite „Websuche“)
     open_in_browser = Signal(str)   # Adresse im eingebauten Browser öffnen
     login_requested = Signal(object)  # Quelle, bei der man sich anmelden will
+    checks_waiting = Signal(list)   # Namen der Seiten, deren Prüfung (Captcha) wartet – leer = keine
+    show_checks = Signal()          # wartende Prüfung jetzt zeigen
 
     def __init__(self, config_path=None):
         super().__init__()

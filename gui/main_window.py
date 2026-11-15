@@ -105,11 +105,18 @@ class MainWindow(QMainWindow):
         self.cancel.hide()
         self.cancel.clicked.connect(self.state.runner.stop)
         bar.addWidget(self.status_label, 1)
+        self.captcha_btn = QPushButton()
+        self.captcha_btn.setObjectName("Primary")
+        self.captcha_btn.hide()
+        self.captcha_btn.clicked.connect(self._show_checks)
+        bar.addPermanentWidget(self.captcha_btn)
+        self._waiting = []
         bar.addPermanentWidget(self.busy)
         bar.addPermanentWidget(self.cancel)
         self.state.runner.progress.connect(self._status)
         self.state.runner.busy_changed.connect(self._busy)
         self.state.message.connect(self._status)
+        self.state.checks_waiting.connect(self._checks_waiting)
         # nachträglich gesetzte Texte (Zähler, Hinweise) ebenfalls übersetzen
         for signal in (self.nav.currentRowChanged, self.state.analysis_changed, self.state.found_changed,
                        self.state.config_changed, self.state.runner.busy_changed):
@@ -250,6 +257,40 @@ class MainWindow(QMainWindow):
         for i, (page_name, _page) in enumerate(self.pages):
             if page_name == name:
                 self.nav.setCurrentRow(i)
+
+    # -- Captchas: wie bei JDownloader nach vorne holen, gelöst wird im eingebauten Browser ----------
+    def _web_visible(self):
+        web = dict(self.pages).get("Websuche")
+        return (self.isActiveWindow() and self.stack.currentWidget() is web
+                and web.tabs.currentWidget() is web.browser_tab)
+
+    def _checks_waiting(self, names):
+        import i18n
+        new = [n for n in names if n not in self._waiting]
+        self._waiting = list(names)
+        if not names:
+            self.captcha_btn.hide()
+            return
+        self.captcha_btn.setText(i18n.t("Captcha wartet: {} – jetzt lösen", ", ".join(names)))
+        self.captcha_btn.show()
+        if not new or self._web_visible():
+            return
+        from PySide6.QtWidgets import QApplication
+        QApplication.alert(self)                       # Taskleiste blinkt, falls das Fenster hinten liegt
+        box = QMessageBox(QMessageBox.Information, i18n.t("Captcha wartet"),
+                          i18n.t("{} will prüfen, ob du ein Mensch bist. Die Suche dort geht weiter, sobald du "
+                                 "die Prüfung im eingebauten Browser gelöst hast.", ", ".join(new)), parent=self)
+        now = box.addButton(i18n.t("Jetzt lösen"), QMessageBox.AcceptRole)
+        box.addButton(i18n.t("Später"), QMessageBox.RejectRole)
+        box.setModal(False)
+        box.buttonClicked.connect(lambda b: b is now and self._show_checks())
+        box.show()
+
+    def _show_checks(self):
+        self.go_to("Websuche")
+        self.state.show_checks.emit()
+        self.raise_()
+        self.activateWindow()
 
     def _status(self, text):
         import i18n

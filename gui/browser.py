@@ -178,6 +178,7 @@ class BrowserPane(QWidget):
     """Sichtbarer Browser mit Adresszeile und „Anmeldung speichern“."""
     login_saved = Signal(str, int)            # Quelle, Anzahl Cookies
     check_passed = Signal(str)                # Quelle, deren Prüfung (Captcha) gelöst ist
+    checks_changed = Signal(list)             # Namen der wartenden Prüfungen
 
     def __init__(self, core, parent=None):
         super().__init__(parent)
@@ -247,6 +248,7 @@ class BrowserPane(QWidget):
         self.checks += [c for c in checks if c["id"] not in known]
         if self.checks:
             self._show_check()
+        self.checks_changed.emit([c["name"] for c in self.checks])
 
     def _show_check(self):
         c = self.checks[0]
@@ -276,6 +278,7 @@ class BrowserPane(QWidget):
             self.retry.hide()
             return
         c = self.checks.pop(0)
+        self.checks_changed.emit([x["name"] for x in self.checks])
         self.check_passed.emit(c["id"])
         if self.checks:
             self._show_check()
