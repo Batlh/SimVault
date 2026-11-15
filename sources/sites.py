@@ -488,3 +488,107 @@ class NewSea(Source):
 
     def download_urls(self, result, session=None):
         return []
+
+
+class SexySims(Source):
+    """SexySims (18+, Anmeldung nötig): gleiches Download-System wie früher bei ModTheSims – Suche nach einem
+    Schlagwort (browse.php?tag=…&gs=4 für Sims 4), Treffer als <div class="downloadblock">, die Detailseite
+    (download.php?t=…) enthält direkte Datei-Links (getfile.php). Ohne Anmeldung zeigt die Seite nichts."""
+    id = "sexysims"
+    name = "SexySims"
+    homepage = "https://sexysims.info"
+    login_url = "https://sexysims.info/login.php"
+    needs_login = True
+    adult = True
+    description = "18+-Seite, Anmeldung nötig. Dateien lädt SimVault direkt mit deiner Anmeldung."
+    base = "https://sexysims.info"
+
+    def search_url(self, query):
+        return f"{self.base}/browse.php?tag={quote_plus(query.strip())}&gs=4"
+
+    def search(self, query, session=None):
+        words = _split_words(query)
+        urls = [self.search_url(query)] + ([self.search_url(w) for w in words if len(w) >= 4][:3] if len(words) > 1 else [])
+        seen, results = set(), []
+        for url in urls:
+            page = fetch(session, url)
+            if "You are not allowed to access" in page:
+                raise OSError("SexySims zeigt Suchergebnisse nur angemeldet – unter „Quellen“ anmelden")
+            for r in self.parse(page):
+                if r.url not in seen:
+                    seen.add(r.url)
+                    results.append(r)
+            if len(results) >= 10:
+                break
+        return results[:MAX_RESULTS]
+
+    def parse(self, page):
+        results = []
+        for chunk in re.split(r'(?=<div class=["\']downloadblock)', page)[1:MAX_RESULTS + 1]:
+            href = first(r'<p class=Qfont-large[^>]*>\s*<a href=Q(V)Q', chunk) or first(r'href=Q(/download\.php\?t=\d+)Q', chunk)
+            if not href:
+                continue
+            image = first(r'<img(?=[^>]*featuredimage)[^>]*src=Q(V)Q', chunk)
+            preview = text(first(r'id=Qpostbitpopover_\d+Q[^>]*>\s*<p[^>]*>(.*?)(?:<a [^>]*>more|</p>)', chunk))
+            preview = re.sub(r"^click here to enlarge image\s*", "", preview, flags=re.I)
+            # Lange Titel sind in der Liste mit „…“ gekürzt – der volle Titel steht im title-Attribut
+            title = text(first(r'<p class=Qfont-large[^>]*>\s*<a [^>]*title=Q(V)Q', chunk)) or \
+                text(first(r'<p class=Qfont-large[^>]*>\s*<a [^>]*>(.*?)</a>', chunk))
+            results.append(SearchResult(
+                title=title,
+                url=urljoin(self.base, href), source_id=self.id, image_url=urljoin(self.base, image) if image else "",
+                creator=text(first(r'by\s*<strong>\s*<a [^>]*>(.*?)</a>', chunk)),
+                description=preview[:300]))
+        return results
+
+    def download_urls(self, result, session=None):
+        page = fetch(session, result.url)
+        urls = []
+        for link in re.findall(r'href=["\']([^"\']*getfile\.php\?file=\d+[^"\']*)', page):
+            link = htmlmod.unescape(link)
+            if link not in urls:
+                urls.append(link)
+        return urls
+
+
+class LoversLab(Source):
+    """LoversLab (18+, Anmeldung nötig): Invision-Forum. Mit quick=1 liefert die Suche die Treffer direkt im HTML
+    (sonst lädt die Seite sie per Skript nach); nodes=161 begrenzt auf „The Sims 4“ samt Unterkategorien.
+    Die Seite sperrt schnelle Suchen hintereinander – deshalb genau eine Abfrage pro Suche.
+    Herunterladen nur über die Dateiseite (Schutzschlüssel) -> eingebauter Browser."""
+    id = "loverslab"
+    name = "LoversLab"
+    homepage = "https://www.loverslab.com"
+    login_url = "https://www.loverslab.com/login/"
+    needs_login = True
+    adult = True
+    description = "18+-Seite, Anmeldung nötig. Sucht in den Sims-4-Dateien; heruntergeladen wird im eingebauten Browser."
+    base = "https://www.loverslab.com"
+    sims4_category = 161
+
+    def search_url(self, query):
+        return (f"{self.base}/search/?q={quote_plus(query.strip())}&type=downloads_file&quick=1"
+                f"&nodes={self.sims4_category}")
+
+    def search(self, query, session=None):
+        return self.parse(fetch(session, self.search_url(query)))
+
+    def parse(self, page):
+        results = []
+        for chunk in re.split(r'(?=<li[^>]*class=["\'][^"\']*ipsStreamItem_contentBlock)', page)[1:MAX_RESULTS + 1]:
+            href = first(r'<span class=QipsContainedVQ>\s*<a\s[^>]*?href=Q(V)Q', chunk)
+            if not href or "/files/file/" not in href:
+                continue
+            image = first(r'<img src=Q(https?://V)Q[^>]*alt=QMore information', chunk) or \
+                htmlmod.unescape(first(r'background-image:\s*url\(\s*(?:&quot;|["\'])?(https?:[^"\')&]+)', chunk))
+            category = text(first(r'posted a file in\s*<a [^>]*>(.*?)</a>', chunk))
+            results.append(SearchResult(
+                title=text(first(r'<span class=QipsContainedVQ>\s*<a\s[^>]*>(.*?)</a>', chunk)),
+                url=htmlmod.unescape(href).split("?")[0], source_id=self.id, image_url=image,
+                creator=text(first(r'ipsStreamItem_status[^>]*>\s*<a [^>]*>(.*?)</a>', chunk)),
+                description=text(first(r'data-findTerm[^>]*>(.*?)</div>', chunk))[:300],
+                extra={"kategorie": category}))
+        return results
+
+    def download_urls(self, result, session=None):
+        return []

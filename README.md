@@ -141,9 +141,8 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 
 ## 🗺️ Roadmap (planned)
 
-- 🌐 **More result lists** — Patreon, LoversLab and SexySims only show results when logged in, Simsworkshop
-  has a Cloudflare "are you human" check and Around the Sims has no search: these stay search links that open
-  in the built-in browser (downloads there are still installed automatically). More sites can be added as full
+- 🌐 **More result lists** — Patreon's search only finds creators, Simsworkshop's Cloudflare "are you human"
+  check loops endlessly and Around the Sims has no search: these stay search links that open in the built-in browser (downloads there are still installed automatically). More sites can be added as full
   sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
 - 🛡️ **Captcha automation** — captchas are solved by hand in the built-in browser (done); automation optional later
 - 📱 **Mobile App** for remote analysis
@@ -160,7 +159,8 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   rooms) to `Tray/`. ZIP, RAR and 7z (also nested) are unpacked. Already installed CC (all CAS parts are in the
   Mods folder, or the same file is already there) and broken files are skipped; nothing is ever overwritten.
 - **Result lists** from **The Sims Resource, CurseForge, ModTheSims, Sims Finds, Tumblr, Sims 4 Updates,
-  The Sims Catalog and NewSea** (and any full source in `plugins/`): title, preview image, creator and description.
+  The Sims Catalog and NewSea**, and — after logging in under *Sources* — **LoversLab** (Sims 4 files only) and
+  **SexySims** (files downloaded directly with your login), plus any full source in `plugins/`: title, preview image, creator and description.
   Tumblr results carry the download links from the post (SimFileShare, Mediafire, Patreon …, real file hosts
   first). NewSea has no search of its own: SimVault reads its Sims 4 catalog (~500 entries) once a week and
   searches it locally. ModTheSims files are downloaded directly (every file of the

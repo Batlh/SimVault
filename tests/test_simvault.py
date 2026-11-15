@@ -2197,3 +2197,67 @@ class NewSeaTests(unittest.TestCase):
         self.assertEqual(Session.calls, calls)                       # zweite Suche aus dem Zwischenspeicher
         self.assertEqual(src.search("newsea hair", Session()), [])   # nur Füllwörter
         self.assertEqual(src.download_urls(found[0]), [])
+
+
+SEXYSIMS_PAGE = """<div class="row cf" id="masonrycontainer"><div class="span12"><div class="downloadblock">
+<div class="downloadinfoblock cf"><div class="thumbimage well"><a href='/download.php?t=176786'>
+<img class='featuredimage' src='https://thumbs2.sexysims.info//img/2/330656.largethumb.jpg' /></a></div>
+<div><p class="font-large bold" > <a href="/download.php?t=176786" title="High School Sex Classes (High School Years)">High
+School Sex Classes (High...</a> </p><p class="muted"> by <strong><a href="/member.php?u=1">BiscuitButt</a></strong> 1st Jan</p>
+</div></div><div id="postbitpopover_176786" style="display:none"><p style="line-height:1.3em;">click here to enlarge image
+Ersetzt die Highschool-Kurse <a href='/download.php?t=176786'>more...</a></p></div></div>"""
+
+SEXYSIMS_DETAIL = """<td width="70%"><a href="https://chii.sexysims.info/getfile.php?file=330655"> {BiscuitButt} V5.rar</a>
+<a href="https://chii.sexysims.info/getfile.php?file=330655">Download</a></td>"""
+
+LOVERSLAB_PAGE = """<ol><li class="ipsStreamItem ipsStreamItem_contentBlock ipsStreamItem_expanded" data-role="activityItem">
+<div class="ipsStreamItem_header"><h2 class="ipsStreamItem_title"><span><a href="https://www.loverslab.com/files/file/1-x/?do=getNewComment"
+title="Go to first unread post"><i class="fa fa-circle"></i></a></span> <span class="ipsContained ipsType_break"><a
+href="https://www.loverslab.com/files/file/52834-pretty-flowers-lingerie/?tab=details" data-linktype="link">Pretty Flowers
+<mark class="ipsMatch1">Lingerie</mark></a> </span></h2><p class="ipsType_reset ipsStreamItem_status ipsType_blendLinks">
+<a href="https://www.loverslab.com/profile/1-grayvixen/" class="ipsType_break">GrayVixen</a> posted a file in
+<a href="https://www.loverslab.com/files/category/200-clothing/">Clothing</a></p></div>
+<div class="ipsStreamItem_snippet"><span style='background-image: url( &quot;https://static.loverslab.com/s/1.thumb.jpg&quot; )'
+class='ipsThumb'><img src='https://static.loverslab.com/s/1.thumb.jpg' alt='More information about &quot;x&quot;' loading="lazy">
+</span><div class='ipsType_richText' data-searchable data-findTerm> Maxis Match, 17 Varianten </div></div></li></ol>"""
+
+
+class AdultSiteParserTests(unittest.TestCase):
+    def test_sexysims(self):
+        from sources.sites import SexySims
+
+        class Session:
+            renderer = None
+
+            def get(self, url):
+                return SEXYSIMS_DETAIL
+
+        src = SexySims()
+        r = src.parse(SEXYSIMS_PAGE)[0]
+        self.assertEqual((r.title, r.creator, r.description),
+                         ("High School Sex Classes (High School Years)", "BiscuitButt", "Ersetzt die Highschool-Kurse"))
+        self.assertEqual(r.url, "https://sexysims.info/download.php?t=176786")
+        self.assertEqual(r.image_url, "https://thumbs2.sexysims.info//img/2/330656.largethumb.jpg")
+        self.assertEqual(src.download_urls(r, Session()), ["https://chii.sexysims.info/getfile.php?file=330655"])
+        self.assertTrue(src.needs_login and src.adult)
+
+        class NotLoggedIn:
+            renderer = None
+
+            def get(self, url):
+                return "<html>Error! You are not allowed to access this forum.</html>"
+
+        with self.assertRaises(OSError):
+            src.search("hair", NotLoggedIn())
+
+    def test_loverslab(self):
+        from sources.sites import LoversLab
+        src = LoversLab()
+        r = src.parse(LOVERSLAB_PAGE)[0]
+        self.assertEqual((r.title, r.creator, r.description, r.extra["kategorie"]),
+                         ("Pretty Flowers Lingerie", "GrayVixen", "Maxis Match, 17 Varianten", "Clothing"))
+        self.assertEqual(r.url, "https://www.loverslab.com/files/file/52834-pretty-flowers-lingerie/")
+        self.assertEqual(r.image_url, "https://static.loverslab.com/s/1.thumb.jpg")
+        self.assertEqual(src.search_url("lingerie set"), "https://www.loverslab.com/search/?q=lingerie+set"
+                                                         "&type=downloads_file&quick=1&nodes=161")
+        self.assertEqual(src.download_urls(r), [])
