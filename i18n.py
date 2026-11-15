@@ -6,7 +6,10 @@
 # über translate_widget(); Texte mit Zahlen darin laufen über Muster wie "Aufräumen ({})".
 # Eine weitere Sprache = ein weiterer Katalog wie EN (Schlüssel: deutscher Text, Wert: Übersetzung).
 #
-# Noch deutsch bleiben: die Kommandozeile, die Berichte und einige ausführliche Meldungen.
+# Kommandozeile und Berichte nutzen dieselbe Einstellung (Kommandozeile zusätzlich: --lang de|en oder die
+# Umgebungsvariable SIMVAULT_LANG); ihre Texte stehen in i18n_texts_en.py.
+# Noch deutsch bleiben: ausführliche Erklärungen aus der Analyse (Empfehlungen zu Konflikten, Reparatur-Hinweise,
+# Gründe beim Installieren) und Log-Meldungen.
 
 import re
 import locale
@@ -15,24 +18,45 @@ LANGUAGES = {"de": "Deutsch", "en": "English"}
 _lang = "de"
 
 
-def detect():
-    """Sprache des Systems: "de" bei deutschem Windows, sonst "en"."""
+def detect(qt=True):
+    """Sprache des Systems: "de" bei deutschem System, sonst "en". qt=False: ohne Qt (Kommandozeile)."""
+    import os
+    env = os.environ.get("SIMVAULT_LANG", "").lower()
+    if env in LANGUAGES:
+        return env
     code = ""
-    try:
-        from PySide6.QtCore import QLocale
-        code = QLocale.system().name()
-    except Exception:
+    if qt:
+        try:
+            from PySide6.QtCore import QLocale
+            code = QLocale.system().name()
+        except Exception:
+            code = ""
+    if not code and os.name == "nt":
+        try:
+            import ctypes
+            if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x07:   # 0x07 = Deutsch
+                return "de"
+            return "en"
+        except Exception:
+            code = ""
+    if not code:
+        for var in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
+            code = os.environ.get(var, "")
+            if code:
+                break
+    if not code:
         try:
             code = locale.getlocale()[0] or ""
         except Exception:
             code = ""
-    return "de" if code.lower().startswith("de") else "en"
+    code = code.lower()
+    return "de" if code.startswith("de") or code.startswith("german") else "en"
 
 
-def set_language(code):
+def set_language(code, qt=True):
     global _lang
     code = (code or "auto").lower()
-    _lang = detect() if code == "auto" else (code if code in LANGUAGES else "de")
+    _lang = detect(qt) if code == "auto" else (code if code in LANGUAGES else "de")
     return _lang
 
 
@@ -331,5 +355,9 @@ EN = {
     "Bitte zuerst eine Quelle in der Liste auswählen.": "Please select a source in the list first.",
     "Abgebrochen.": "Cancelled.",
 }
+
+from i18n_texts_en import EN_CLI, EN_REPORT   # noqa: E402  (Kommandozeile und Berichte)
+EN.update(EN_CLI)
+EN.update(EN_REPORT)
 
 CATALOGS = {"en": EN}
