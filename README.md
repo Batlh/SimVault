@@ -146,6 +146,8 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
 - 🐞 **Debug log & bug reports** — log file, crash catcher and a "Report a bug" button that opens a pre-filled,
   anonymised GitHub issue (plan: [`docs/plan-fehlerberichte.md`](docs/plan-fehlerberichte.md))
+- 🧹 **Tidy up the repository** — move the 25 top-level modules into a `simvault/` package with sub-folders
+  (plan: [`docs/plan-aufraeumen.md`](docs/plan-aufraeumen.md))
 - 📱 **Mobile App** for remote analysis
 - 🌍 **More languages** — window, command line and reports speak German and English; the detailed explanations
   from the analysis (conflict recommendations, repair hints, install reasons) are still German. Another language
