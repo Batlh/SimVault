@@ -14,13 +14,17 @@
 # Die Liste der Downloads (downloads.json im Download-Ordner) merkt sich, was installiert wurde.
 
 import os
+import re
 import json
 import shutil
 import hashlib
 import logging
 import zipfile
 import tempfile
+import threading
+import time
 from datetime import datetime
+from urllib.parse import urlsplit
 
 import dbpf
 import archive_tools
@@ -35,6 +39,65 @@ ARCHIVE_EXTENSIONS = (".zip", ".rar", ".7z")
 WANTED = PACKAGE_EXTENSIONS + SCRIPT_EXTENSIONS + TRAY_EXTENSIONS + ARCHIVE_EXTENSIONS
 MAX_DEPTH = 3
 MIN_CC_ID = 1 << 32
+
+
+# Seiten, die zu häufiges Laden derselben Datei bestrafen: (Muster der Datei-URL, erlaubte Anzahl, Zeitraum in
+# Sekunden, Hinweis). NewSea sperrt das Konto für eine Stunde, wenn dieselbe Datei öfter als zweimal in fünf
+# Minuten geladen wird.
+DOWNLOAD_LIMITS = [
+    (re.compile(r"^https?://(www\.)?newseasims\.com/downfile\.php", re.I), 2, 300,
+     "NewSea sperrt dein Konto für 1 Stunde, wenn dieselbe Datei öfter als zweimal in 5 Minuten geladen wird"),
+]
+
+
+class DownloadGuard:
+    """Zählt Downloads derselben Datei und sagt, wann ein weiterer gegen die Regeln der Seite verstoßen würde.
+    Thread-sicher (der eingebaute Browser fragt aus seinem Netzwerk-Thread)."""
+
+    def __init__(self, limits=None, clock=time.monotonic):
+        self.limits = DOWNLOAD_LIMITS if limits is None else limits
+        self.clock = clock
+        self._seen = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _key(url):
+        parts = urlsplit(url.strip())
+        host = (parts.hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return f"{host}{parts.path}?{parts.query}"
+
+    def _rule(self, url):
+        for pattern, count, seconds, hint in self.limits:
+            if pattern.search(url):
+                return count, seconds, hint
+        return None
+
+    def check(self, url):
+        """Gibt (Wartezeit in Sekunden, Hinweis) zurück; Wartezeit 0 = darf geladen werden (und wird gezählt)."""
+        rule = self._rule(url)
+        if not rule:
+            return 0, ""
+        count, seconds, hint = rule
+        key, now = self._key(url), self.clock()
+        with self._lock:
+            times = [t for t in self._seen.get(key, []) if now - t < seconds]
+            if len(times) >= count:
+                self._seen[key] = times
+                oldest = times[0] if times else now
+                return max(1, int(seconds - (now - oldest)) + 1), hint
+            times.append(now)
+            self._seen[key] = times
+        return 0, hint
+
+
+download_guard = DownloadGuard()
+
+
+def blocked_message(wait, hint):
+    minutes = (wait + 59) // 60
+    return f"Nicht geladen: {hint}. Bitte noch etwa {minutes} Min. warten."
 
 
 def _sha1(path):

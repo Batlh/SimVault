@@ -132,12 +132,18 @@ class WebPage(QWidget):
         self.browser_core.download_failed.connect(
             lambda name, why: self.state.message.emit(f"Download {name} fehlgeschlagen: {why}"))
         self.browser_core.download_progress.connect(self.state.message.emit)
+        self.browser_core.download_blocked.connect(self._download_blocked)
         self.browser.login_saved.connect(lambda sid, n: self.state.message.emit(
             f"Anmeldung gespeichert ({n} Cookies, verschlüsselt)." if n else "Keine Cookies zum Speichern."))
         if self.browser_core.load_error:
             self.browser.hint.setText(f"Gespeicherte Anmeldungen nicht lesbar: {self.browser_core.load_error}")
             self.browser.hint.show()
         return self.browser
+
+    def _download_blocked(self, message):
+        self.state.message.emit(message)
+        self.browser.hint.setText(message)
+        self.browser.hint.show()
 
     def open_url(self, url):
         self.ensure_browser().open(url)
@@ -201,7 +207,8 @@ class WebPage(QWidget):
         self.results = results
         self.list.clear()
         for r in results:
-            text = r.title + (f"\nvon {r.creator}" if r.creator else "") + f"\n{r.extra.get('quelle', '')}"
+            text = r.title + (f"\nvon {r.creator}" if r.creator else "") + f"\n{r.extra.get('quelle', '')}" \
+                + (f" · {r.extra['zugang']}" if r.extra.get("zugang") else "")
             item = QListWidgetItem(text)
             pix = QPixmap()
             if r.extra.get("bild") and pix.loadFromData(r.extra["bild"]):

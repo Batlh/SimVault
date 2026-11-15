@@ -409,7 +409,9 @@ class NewSea(Source):
     Stand November 2026: Freie Frisuren lädt ein Klick auf den Datei-Link (downfile.php) im Browser direkt
     herunter, ohne Konto. Ein Abruf per Skript liefert dagegen nur eine leere Seite – deshalb geht der
     Download über den eingebauten Browser. Donate-Frisuren gibt es nur angemeldet, sonst verlangt die Seite
-    eine Registrierung. Anmelden geht über das Formular auf der Startseite (ID, Passwort, Bild-Code);
+    eine Registrierung, die „Featured“-Sachen nur nach mindestens 3 Monaten Spende. Wer dieselbe Datei öfter
+    als zweimal in 5 Minuten lädt, wird für 1 Stunde gesperrt – der eingebaute Browser hält eine dritte Anfrage
+    an (downloads.DownloadGuard). Anmelden geht über das Formular auf der Startseite (ID, Passwort, Bild-Code);
     SimVault speichert die Anmeldung wie bei allen Seiten verschlüsselt."""
     id = "newsea"
     name = "NewSea"
@@ -422,6 +424,19 @@ class NewSea(Source):
     max_pages = 60
     cache_days = 7
     ignore_words = {"newsea", "sims", "sims4", "ts4", "4", "hair", "hairstyle", "cc"}
+
+    @staticmethod
+    def access(name):
+        """Free/Donate/TopStuff aus dem Namen („Lipstick(Free)“, „Hairstyle(Donate)plus“). Die neueren
+        Sims-4-Frisuren tragen keine Angabe – dann leer."""
+        tag = (first(r"\((Free\d*|Donate|TopStuff)\)", name, re.I) or "").lower()
+        if tag.startswith("free"):
+            return "Free – ohne Konto"
+        if tag == "donate":
+            return "Donate – nur angemeldet"
+        if tag == "topstuff":
+            return "TopStuff – nur angemeldet"
+        return ""
 
     def search_url(self, query):
         return f"https://www.google.com/search?q=site%3Anewseasims.com+sims+4+{quote_plus(query.strip())}"
@@ -489,8 +504,15 @@ class NewSea(Source):
 
         hits = [i for i in items if all(w in name_of(i) for w in words)] or \
             [i for i in items if any(len(w) >= 4 and w in name_of(i) for w in words)]
-        return [SearchResult(title=i["name"], url=i["url"], source_id=self.id, image_url=i["image"],
-                             creator=i["creator"]) for i in hits[:MAX_RESULTS]]
+        results = []
+        for i in hits[:MAX_RESULTS]:
+            zugang = self.access(i["name"])
+            results.append(SearchResult(
+                title=i["name"], url=i["url"], source_id=self.id, image_url=i["image"], creator=i["creator"],
+                description=(zugang + ". " if zugang else "") + "Dieselbe Datei höchstens zweimal in 5 Minuten laden, "
+                            "sonst sperrt NewSea das Konto für 1 Stunde.",
+                extra={"zugang": zugang} if zugang else {}))
+        return results
 
     def download_urls(self, result, session=None):
         return []

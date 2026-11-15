@@ -98,6 +98,10 @@ class WebSession:
 
     def download(self, url, folder, progress=None, should_stop=None, referer=None):
         """Lädt url nach folder. Gibt den Pfad der Datei zurück."""
+        from downloads import download_guard, blocked_message
+        wait, hint = download_guard.check(url)
+        if wait:
+            raise OSError(blocked_message(wait, hint))
         os.makedirs(folder, exist_ok=True)
         with self.open(url, referer) as response:
             ctype = (response.headers.get("Content-Type") or "").lower()

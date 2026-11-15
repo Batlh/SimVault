@@ -2263,3 +2263,45 @@ class AdultSiteParserTests(unittest.TestCase):
         self.assertEqual(src.search_url("lingerie set"), "https://www.loverslab.com/search/?q=lingerie+set"
                                                          "&type=downloads_file&quick=1&nodes=161")
         self.assertEqual(src.download_urls(r), [])
+
+
+class DownloadGuardTests(unittest.TestCase):
+    def test_newsea_third_download_within_5_minutes_is_held(self):
+        from downloads import DownloadGuard, blocked_message
+        now = [1000.0]
+        guard = DownloadGuard(clock=lambda: now[0])
+        url = "http://www.newseasims.com/downfile.php?proid=576&id=1426"
+        self.assertEqual(guard.check(url)[0], 0)
+        now[0] += 60
+        self.assertEqual(guard.check("http://newseasims.com/downfile.php?proid=576&id=1426")[0], 0)  # gleiche Datei
+        now[0] += 60
+        wait, hint = guard.check(url)
+        self.assertEqual(wait, 181)                       # bis die erste Anfrage 5 Minuten alt ist
+        self.assertIn("1 Stunde", hint)
+        self.assertIn("4 Min.", blocked_message(wait, hint))
+        self.assertEqual(guard.check("http://www.newseasims.com/downfile.php?proid=576&id=1427")[0], 0)  # andere Datei
+        self.assertEqual(guard.check("http://www.newseasims.com/inside-page.php?cid=1&id=576")[0], 0)   # keine Datei
+        self.assertEqual(guard.check("https://www.thesimsresource.com/downloads/download/itemId/1")[0], 0)
+        now[0] += 181
+        self.assertEqual(guard.check(url)[0], 0)          # danach wieder erlaubt
+
+    def test_web_session_respects_guard(self):
+        import re
+        import downloads
+        from web_session import WebSession
+        old = downloads.download_guard
+        downloads.download_guard = downloads.DownloadGuard(limits=[(re.compile("example\\.org/file"), 0, 300, "Test")])
+        try:
+            with self.assertRaises(OSError) as ctx:
+                WebSession().download("http://example.org/file?id=1", tempfile.gettempdir())
+            self.assertIn("Nicht geladen: Test", str(ctx.exception))
+        finally:
+            downloads.download_guard = old
+
+    def test_newsea_access_labels(self):
+        from sources.sites import NewSea
+        self.assertEqual(NewSea.access("Lipstick(Free)"), "Free – ohne Konto")
+        self.assertEqual(NewSea.access("Hairstyle(Free2024)"), "Free – ohne Konto")
+        self.assertEqual(NewSea.access("Hairstyle(Donate)plus"), "Donate – nur angemeldet")
+        self.assertEqual(NewSea.access("Hairstyle(TopStuff)"), "TopStuff – nur angemeldet")
+        self.assertEqual(NewSea.access("StarfoldSweet+"), "")

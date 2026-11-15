@@ -17,7 +17,8 @@ from urllib.parse import urlparse
 
 from PySide6.QtCore import QDateTime, QObject, QTimer, QUrl, Signal
 from PySide6.QtNetwork import QNetworkCookie
-from PySide6.QtWebEngineCore import QWebEngineDownloadRequest, QWebEnginePage, QWebEngineProfile
+from PySide6.QtWebEngineCore import (QWebEngineDownloadRequest, QWebEnginePage, QWebEngineProfile,
+                                     QWebEngineUrlRequestInterceptor)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
@@ -49,11 +50,28 @@ def _to_qt(c):
     return cookie
 
 
+class _DownloadLimiter(QWebEngineUrlRequestInterceptor):
+    """Hält Datei-Anfragen an, bevor sie die Seite erreichen, wenn die Seite sie als zu häufig werten würde
+    (NewSea zählt schon die Anfrage, ein Abbruch erst beim Download wäre zu spät)."""
+
+    def __init__(self, blocked, parent=None):
+        super().__init__(parent)
+        self.blocked = blocked                    # Signal(str): Meldung
+
+    def interceptRequest(self, info):
+        from downloads import download_guard, blocked_message
+        wait, hint = download_guard.check(info.requestUrl().toString())
+        if wait:
+            info.block(True)
+            self.blocked.emit(blocked_message(wait, hint))
+
+
 class BrowserCore(QObject):
     """Gemeinsames Browser-Profil (im Speicher), Cookies, Downloads und das Rendern für Quellen."""
     download_finished = Signal(str, str)      # Pfad, URL
     download_failed = Signal(str, str)        # Dateiname, Grund
     download_progress = Signal(str)
+    download_blocked = Signal(str)            # Meldung: Datei absichtlich nicht geladen
     _render_request = Signal(str, object)
 
     def __init__(self, store, download_folder, parent=None):
@@ -73,6 +91,8 @@ class BrowserCore(QObject):
         except Exception as e:                            # Anmeldungen nicht lesbar -> ohne weiter
             self.load_error = str(e)
         self.profile.downloadRequested.connect(self._download)
+        self._limiter = _DownloadLimiter(self.download_blocked, self)
+        self.profile.setUrlRequestInterceptor(self._limiter)
         self._render_request.connect(self._render)
         self._pages = []
 
