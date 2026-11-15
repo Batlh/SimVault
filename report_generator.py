@@ -22,6 +22,11 @@ from collections import Counter
 from datetime import datetime
 
 import cc_searcher
+import i18n
+from i18n import t, tr
+
+# Sprache: wie die Oberfläche (ui_language); die JSON-Datei bleibt deutsch (Schlüssel und Werte), weil
+# SimVault sie selbst wieder einliest (z. B. „restore“).
 
 STATUS_ORDER = ["defekt", "ungenutzt", "genutzt", "nicht nachweisbar", "nicht prüfbar", "—"]
 STATUS_HELP = {
@@ -97,9 +102,9 @@ def generate_report(mod_scan, usage=None, saves=None, output_dir="reports",
     for c in (conflicts or {}).get("konflikte", []):
         serious = c["art"] in ("Konflikt", "Überschreibung") and c["genutzt"]
         issues.append({"schwere": "Fehler" if serious else "Hinweis", "art": c["art"],
-                       "meldung": f"{c['teile']} gemeinsame{'s Teil' if c['teile'] == 1 else ' Teile'} "
-                                  f"({c['identisch']} identisch, "
-                                  f"{c['unterschiedlich']} unterschiedlich). {c['empfehlung']}",
+                       "meldung": t("{} gemeinsames Teil ({} identisch, {} unterschiedlich). {}" if c["teile"] == 1
+                                    else "{} gemeinsame Teile ({} identisch, {} unterschiedlich). {}",
+                                    c["teile"], c["identisch"], c["unterschiedlich"], c["empfehlung"]),
                        "dateien": c["dateien"]})
 
     written = []
@@ -142,9 +147,10 @@ def _mb(n):
 def _write_csv(path, data_rows):
     with open(path, "w", newline="", encoding="utf-8-sig") as f:  # utf-8-sig: Excel erkennt Umlaute
         writer = csv.writer(f, delimiter=";")
-        writer.writerow(["Datei", "Kategorie", "Status", "Spielstände", "Tray-Einträge", "Größe (Bytes)", "Ressourcen"])
+        writer.writerow([t("Datei"), t("Kategorie"), t("Status"), t("Spielstände"), t("Tray-Einträge"),
+                         t("Größe (Bytes)"), t("Ressourcen")])
         for d in data_rows:
-            writer.writerow([d["datei"], d["kategorie"], d["status"], ", ".join(d["spielstaende"]),
+            writer.writerow([d["datei"], tr(d["kategorie"]), tr(d["status"]), ", ".join(d["spielstaende"]),
                              d["tray_eintraege"], d["groesse_bytes"], d["ressourcen"]])
     return path
 
@@ -152,66 +158,69 @@ def _write_csv(path, data_rows):
 def _write_missing_csv(path, missing):
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f, delimiter=";")
-        writer.writerow(["ID", "Art", "Anzahl", "Verwendet von", "Quellen"])
+        writer.writerow(["ID", t("Art"), t("Anzahl"), t("Verwendet von"), t("Quellen")])
         for m in missing:
-            writer.writerow([m["id"], m["art"], m["anzahl"], " | ".join(m["verwendet_von"]), ", ".join(m["quellen"])])
+            writer.writerow([m["id"], tr(m["art"]), m["anzahl"], " | ".join(m["verwendet_von"]), ", ".join(m["quellen"])])
     return path
 
 
 def _parts_summary(parts):
     """["Haare (Steckplatz 2)", "Haare (Steckplatz 2)", "Schuhe (Steckplatz 8)"] -> "2× Haare, 1× Schuhe" """
     counts = Counter(p["art"].split(" (")[0] for p in parts)
-    return ", ".join(f"{n}× {art}" for art, n in counts.most_common())
+    return ", ".join(f"{n}× {tr(art)}" for art, n in counts.most_common())
 
 
 def _write_md(path, app_name, summary, issues, data_rows, missing=None, households=(), found=None):
-    lines = [f"# {app_name} – Bericht vom {summary['erstellt'].replace('T', ' ')}", "",
-             f"- Mods-Ordner: `{summary['mods_ordner']}`",
-             f"- Spielstände: {', '.join(summary['spielstaende']) or '—'}",
-             f"- Dateien: {summary['anzahl_dateien']}", ""]
-    lines += ["## Status", ""] + [f"- **{k}**: {v}" for k, v in summary["status"].items()] + [""]
+    lines = [t("# {} – Bericht vom {}", app_name, summary["erstellt"].replace("T", " ")), "",
+             t("- Mods-Ordner: `{}`", summary["mods_ordner"]),
+             t("- Spielstände: {}", ", ".join(summary["spielstaende"]) or "—"),
+             t("- Dateien: {}", summary["anzahl_dateien"]), ""]
+    lines += ["## " + t("Status"), ""] + [f"- **{tr(k)}**: {v}" for k, v in summary["status"].items()] + [""]
     if issues:
-        lines += ["## Probleme", ""]
+        lines += ["## " + t("Probleme"), ""]
         for i in issues:
-            lines.append(f"- **{i['schwere']} – {i['art']}**: {i['meldung']}")
+            lines.append(f"- **{tr(i['schwere'])} – {tr(i['art'])}**: {tr(i['meldung'])}")
             lines += [f"  - `{f}`" for f in i["dateien"][:50]]
         lines.append("")
     if missing is not None:
-        lines += ["## Fehlende CC", "", f"_{summary.get('fehlend_info') or ''}_", ""]
+        lines += ["## " + t("Fehlende CC"), "", f"_{summary.get('fehlend_info') or ''}_", ""]
         if missing:
-            lines += ["| ID | Art | Anzahl | Verwendet von | Quellen |", "|---|---|---|---|---|"]
+            lines += ["| ID | " + " | ".join(t(x) for x in ("Art", "Anzahl", "Verwendet von", "Quellen")) + " |",
+                      "|---|---|---|---|---|"]
             for m in missing:
                 who = ", ".join(m["verwendet_von"][:5]).replace("|", "\\|")
-                lines.append(f"| `{m['id']}` | {m['art']} | {m['anzahl']} | {who} | {', '.join(m['quellen'])} |")
+                lines.append(f"| `{m['id']}` | {tr(m['art'])} | {m['anzahl']} | {who} | {', '.join(m['quellen'])} |")
         else:
-            lines.append("Keine fehlende CC gefunden.")
+            lines.append(t("Keine fehlende CC gefunden."))
         lines.append("")
     if found:
-        lines += ["## Auf deinem PC gefunden", "",
-                  f"{found['gefunden']} von {found['gesucht']} fehlenden Teilen gefunden.", ""]
+        lines += ["## " + t("Auf deinem PC gefunden"), "",
+                  t("{} von {} fehlenden Teilen gefunden.", found["gefunden"], found["gesucht"]), ""]
         for item in found["dateien"]:
             where = f"{item['pfad']} → {item['archiv_eintrag']}" if item["archiv_eintrag"] else item["pfad"]
-            lines.append(f"- **{item['anzahl_ids']} Teile** ({', '.join(item['arten'])}): `{where}`")
+            lines.append(t("- **{} Teile** ({}): `{}`", item["anzahl_ids"], ", ".join(tr(a) for a in item["arten"]), where))
         for u in sorted(found["nicht_lesbar"], key=lambda x: not x.get("sims")):
-            mark = " **(Sims-Bezug)**" if u.get("sims") else ""
-            lines.append(f"- nicht durchsuchbar{mark}: `{u['pfad']}` ({u['grund']})")
+            mark = t(" **(Sims-Bezug)**") if u.get("sims") else ""
+            lines.append(t("- nicht durchsuchbar{}: `{}` ({})", mark, u["pfad"], u["grund"]))
         lines.append("")
     if households:
-        lines += ["## Bibliothek: Einträge mit fehlender CC", ""]
+        lines += ["## " + t("Bibliothek: Einträge mit fehlender CC"), ""]
         for h in households:
-            by = f" von **{h['ersteller']}**" if h["ersteller"] else ""
-            lines.append(f"### {h['name']}{by} ({h['typ']}, {h['datum'] or 'Datum unbekannt'})")
-            lines.append(f"- Fehlt: {_parts_summary(h['fehlend'])}")
+            by = t(" von **{}**", h["ersteller"]) if h["ersteller"] else ""
+            lines.append(f"### {h['name']}{by} ({tr(h['typ'])}, {h['datum'] or t('Datum unbekannt')})")
+            lines.append(t("- Fehlt: {}", _parts_summary(h["fehlend"])))
             if h["beschreibung"]:
-                lines.append(f"- Beschreibung: {h['beschreibung'][:300]}")
+                lines.append(t("- Beschreibung: {}", h["beschreibung"][:300]))
             for link in h["links"]:
-                lines.append(f"- CC-Link aus der Beschreibung: {link}")
-            lines.append(f"- [Im Web suchen]({h['suche']})")
+                lines.append(t("- CC-Link aus der Beschreibung: {}", link))
+            lines.append(f"- [{t('Im Web suchen')}]({h['suche']})")
             lines.append("")
-    lines += ["## Mods", "", "| Datei | Kategorie | Status | Spielstände | Tray |", "|---|---|---|---|---|"]
+    lines += ["## Mods", "", "| " + " | ".join(t(x) for x in ("Datei", "Kategorie", "Status", "Spielstände", "Tray"))
+              + " |", "|---|---|---|---|---|"]
     for d in data_rows:
         name = d["datei"].replace("|", "\\|")
-        lines.append(f"| {name} | {d['kategorie']} | {d['status']} | {', '.join(d['spielstaende'])} | {d['tray_eintraege'] or ''} |")
+        lines.append(f"| {name} | {tr(d['kategorie'])} | {tr(d['status'])} | {', '.join(d['spielstaende'])} | "
+                     f"{d['tray_eintraege'] or ''} |")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return path
@@ -295,97 +304,104 @@ def _logo_tag(logo_path):
 def _write_html(path, app_name, summary, issues, rows, broken_names, missing=None, households=(),
                 found=None, found_at=None, logo=""):
     e = escape
-    out = [f"<!DOCTYPE html><html lang='de'><head><meta charset='utf-8'><title>{e(app_name)} Bericht</title>",
+    lang = i18n.language()
+    out = [f"<!DOCTYPE html><html lang='{lang}'><head><meta charset='utf-8'><title>{e(t('{} Bericht', app_name))}</title>",
            f"<style>{_CSS}</style></head><body><div class='wrap'>",
-           f"<h1>{logo}{e(app_name)} – Bericht</h1>",
-           f"<div class='meta'>{e(summary['erstellt'].replace('T', ' '))} · Mods-Ordner: {e(summary['mods_ordner'])}<br>"
-           f"Spielstände: {e(', '.join(summary['spielstaende']) or '—')}</div>",
+           f"<h1>{logo}{e(t('{} – Bericht', app_name))}</h1>",
+           f"<div class='meta'>{e(summary['erstellt'].replace('T', ' '))} · {e(t('Mods-Ordner: {}', summary['mods_ordner']))}<br>"
+           f"{e(t('Spielstände: {}', ', '.join(summary['spielstaende']) or '—'))}</div>",
            "<div class='cards'>",
-           f"<div class='card'><b>{summary['anzahl_dateien']}</b>Mod-Dateien</div>"]
+           f"<div class='card'><b>{summary['anzahl_dateien']}</b>{e(t('Mod-Dateien'))}</div>"]
     for status in STATUS_ORDER:
         if status in summary["status"]:
-            out.append(f"<div class='card' title='{e(STATUS_HELP.get(status, ''))}'><b>{summary['status'][status]}</b>{e(status)}</div>")
+            out.append(f"<div class='card' title='{e(t(STATUS_HELP.get(status, '')))}'><b>{summary['status'][status]}</b>"
+                       f"{e(tr(status))}</div>")
     if missing is not None:
-        out.append(f"<div class='card'><b>{len(missing)}</b>fehlende CC</div>")
+        out.append(f"<div class='card'><b>{len(missing)}</b>{e(t('fehlende CC'))}</div>")
     if summary["groesse_ungenutzt_bytes"]:
-        out.append(f"<div class='card'><b>{_mb(summary['groesse_ungenutzt_bytes'])}</b>ungenutzte CC</div>")
+        out.append(f"<div class='card'><b>{_mb(summary['groesse_ungenutzt_bytes'])}</b>{e(t('ungenutzte CC'))}</div>")
     out.append("</div>")
 
     if issues:
-        out.append("<h2>Probleme</h2>")
+        out.append(f"<h2>{e(t('Probleme'))}</h2>")
         for i in issues:
             files = "".join(f"<li>{e(f)}</li>" for f in i["dateien"])
-            out.append(f"<div class='issue {e(i['schwere'])}'><b>{e(i['schwere'])} – {e(i['art'])}:</b> "
-                       f"{e(i['meldung'])}<ul>{files}</ul></div>")
+            out.append(f"<div class='issue {e(i['schwere'])}'><b>{e(tr(i['schwere']))} – {e(tr(i['art']))}:</b> "
+                       f"{e(tr(i['meldung']))}<ul>{files}</ul></div>")
 
     if missing is not None:
-        out.append("<h2>Fehlende CC</h2><div class='meta'>CAS-Teile und Objekte, die in Spielständen oder der "
-                   "Bibliothek verwendet werden, aber in keinem installierten Paket stecken. Im Spiel erscheinen "
-                   "sie unsichtbar oder fehlen. Die ID hilft beim Wiederfinden (z. B. mit Sims 4 Studio).<br>"
-                   f"{e(summary.get('fehlend_info') or '')}</div>")
+        out.append(f"<h2>{e(t('Fehlende CC'))}</h2><div class='meta'>"
+                   + e(t("CAS-Teile und Objekte, die in Spielständen oder der Bibliothek verwendet werden, aber in keinem "
+                         "installierten Paket stecken. Im Spiel erscheinen sie unsichtbar oder fehlen. Die ID hilft beim "
+                         "Wiederfinden (z. B. mit Sims 4 Studio)."))
+                   + f"<br>{e(summary.get('fehlend_info') or '')}</div>")
         if missing:
-            extra = "<th>Gefunden in</th>" if found else ""
-            out.append("<table><tr><th>ID</th><th>Art</th><th>Anzahl</th><th>Verwendet von</th><th>Quellen</th>"
-                       f"{extra}</tr>")
+            extra = f"<th>{e(t('Gefunden in'))}</th>" if found else ""
+            out.append("<table><tr><th>ID</th>" + "".join(f"<th>{e(t(x))}</th>" for x in
+                                                          ("Art", "Anzahl", "Verwendet von", "Quellen")) + f"{extra}</tr>")
             for m in missing:
                 who = m["verwendet_von"]
-                shown = "<br>".join(e(w) for w in who[:8]) + (f"<br>… {len(who) - 8} weitere" if len(who) > 8 else "")
+                shown = "<br>".join(e(w) for w in who[:8]) + ("<br>" + e(t("… {} weitere", len(who) - 8))
+                                                              if len(who) > 8 else "")
                 cell = ""
                 if found:
                     files = (found_at or {}).get(m["id"], [])
                     cell = f"<td class='s-genutzt'>{e(', '.join(files))}</td>" if files else "<td>—</td>"
-                out.append(f"<tr><td><code>{e(m['id'])}</code></td><td>{e(m['art'])}</td><td>{m['anzahl']}</td>"
+                out.append(f"<tr><td><code>{e(m['id'])}</code></td><td>{e(tr(m['art']))}</td><td>{m['anzahl']}</td>"
                            f"<td>{shown}</td><td>{e(', '.join(m['quellen']))}</td>{cell}</tr>")
             out.append("</table>")
         else:
-            out.append("<p>Keine fehlende CC gefunden. 🎉</p>")
+            out.append(f"<p>{e(t('Keine fehlende CC gefunden. 🎉'))}</p>")
 
     if found:
-        out.append(f"<h2>Auf deinem PC gefunden</h2><div class='meta'>{found['gefunden']} von {found['gesucht']} "
-                   "fehlenden Teilen gefunden. Durchsucht: " + e(", ".join(found["ordner"])) + "</div>")
+        out.append(f"<h2>{e(t('Auf deinem PC gefunden'))}</h2><div class='meta'>"
+                   + e(t("{} von {} fehlenden Teilen gefunden. Durchsucht: {}", found["gefunden"], found["gesucht"],
+                         ", ".join(found["ordner"]))) + "</div>")
         if found["dateien"]:
-            out.append("<table><tr><th>Datei</th><th>Teile</th><th>Art</th><th>Für</th><th>Fundort</th></tr>")
+            out.append("<table><tr>" + "".join(f"<th>{e(t(x))}</th>" for x in ("Datei", "Teile", "Art", "Für", "Fundort"))
+                       + "</tr>")
             for item in found["dateien"]:
                 where = e(item["pfad"]) + (f" → {e(item['archiv_eintrag'])}" if item["archiv_eintrag"] else "")
                 more = item.get("weitere_fundorte") or []
                 if more:
-                    where += f"<br><span class='meta'>auch in: {'<br>'.join(e(m) for m in more)}</span>"
+                    where += f"<br><span class='meta'>{e(t('auch in:'))} {'<br>'.join(e(m) for m in more)}</span>"
                 out.append(f"<tr><td>{e(item['datei'])}</td><td>{item['anzahl_ids']}</td>"
-                           f"<td>{e(', '.join(item['arten']))}</td>"
+                           f"<td>{e(', '.join(tr(a) for a in item['arten']))}</td>"
                            f"<td>{e(', '.join(item.get('verwendet_von', [])[:5]))}</td><td>{where}</td></tr>")
-            out.append("</table><p>Zurückholen ohne neue Suche: <code>py -3 main.py restore</code> "
-                       "(kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts; "
-                       "einzelne auslassen mit <code>--ohne TEXT</code>)</p>")
+            out.append("</table><p>" + t("Zurückholen ohne neue Suche: <code>py -3 main.py restore</code> "
+                                         "(kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts; "
+                                         "einzelne auslassen mit <code>--ohne TEXT</code>)") + "</p>")
         if found["nicht_lesbar"]:
             sims = [u for u in found["nicht_lesbar"] if u.get("sims")]
             rest = [u for u in found["nicht_lesbar"] if not u.get("sims")]
             if sims:
-                out.append("<div class='issue Fehler'><b>Nicht durchsuchbar – mit Sims-Bezug</b><ul>"
+                out.append(f"<div class='issue Fehler'><b>{e(t('Nicht durchsuchbar – mit Sims-Bezug'))}</b><ul>"
                            + "".join(f"<li>{e(u['pfad'])} – {e(u['grund'])}</li>" for u in sims) + "</ul></div>")
             if rest:
-                out.append(f"<details><summary>{len(rest)} weitere nicht durchsuchbare Archive ohne erkennbaren "
-                           "Sims-Bezug</summary><ul class='meta'>"
+                out.append(f"<details><summary>{e(t('{} weitere nicht durchsuchbare Archive ohne erkennbaren Sims-Bezug', len(rest)))}"
+                           "</summary><ul class='meta'>"
                            + "".join(f"<li>{e(u['pfad'])} – {e(u['grund'])}</li>" for u in rest)
                            + "</ul></details>")
 
     if households:
-        out.append("<h2>Bibliothek: Einträge mit fehlender CC</h2><div class='meta'>Gespeicherte Haushalte, Grundstücke "
-                   "und Räume, deren CC fehlt. Der Ersteller ist die Galerie-ID – über ihn findest du meist die CC-Liste "
-                   "(Galerie, Tumblr, Patreon, YouTube).</div>")
+        out.append(f"<h2>{e(t('Bibliothek: Einträge mit fehlender CC'))}</h2><div class='meta'>"
+                   + e(t("Gespeicherte Haushalte, Grundstücke und Räume, deren CC fehlt. Der Ersteller ist die Galerie-ID – "
+                         "über ihn findest du meist die CC-Liste (Galerie, Tumblr, Patreon, YouTube).")) + "</div>")
         for n, h in enumerate(households):
-            by = f" von <b>{e(h['ersteller'])}</b>" if h["ersteller"] else ""
-            orig = (f" (ursprünglich von {e(h['original_ersteller'])})"
+            by = t(" von <b>{}</b>", e(h["ersteller"])) if h["ersteller"] else ""
+            orig = (t(" (ursprünglich von {})", e(h["original_ersteller"]))
                     if h["original_ersteller"] and h["original_ersteller"] != h["ersteller"] else "")
             picture = _tray_picture(h.get("bild")) if n < 80 else ""     # Bericht bleibt eine einzelne Datei
             out.append(f"<div class='issue' style='overflow:auto'>{picture}<b>{e(h['name'])}</b>{by}{orig} · "
-                       f"{e(h['typ'])} · {e(h['datum'])}"
-                       f"<br>Fehlt: {e(_parts_summary(h['fehlend']))}")
+                       f"{e(tr(h['typ']))} · {e(h['datum'])}"
+                       f"<br>{e(t('Fehlt: {}', _parts_summary(h['fehlend'])))}")
             if h["beschreibung"]:
                 out.append(f"<br><span class='meta'>{_linkify(h['beschreibung'][:600])}</span>")
-            out.append(f"<br><a href='{e(h['suche'])}' target='_blank' rel='noopener'>Im Web suchen</a></div>")
+            out.append(f"<br><a href='{e(h['suche'])}' target='_blank' rel='noopener'>{e(t('Im Web suchen'))}</a></div>")
 
     if broken_names:
-        out.append("<h2>Defekte Dateien neu suchen</h2><table><tr><th>Datei</th><th>Suchen auf</th></tr>")
+        out.append(f"<h2>{e(t('Defekte Dateien neu suchen'))}</h2><table><tr><th>{e(t('Datei'))}</th>"
+                   f"<th>{e(t('Suchen auf'))}</th></tr>")
         for name in broken_names:
             links = " · ".join(f"<a href='{e(url)}' target='_blank' rel='noopener'>{e(site)}</a>"
                                for site, url in cc_searcher.search_links(name).items())
@@ -393,16 +409,17 @@ def _write_html(path, app_name, summary, issues, rows, broken_names, missing=Non
         out.append("</table>")
 
     out.append("<h2>Mods</h2><div class='meta'>"
-               + "<br>".join(f"<b>{e(k)}</b>: {e(v)}" for k, v in STATUS_HELP.items())
-               + "</div><input id='q' placeholder='Filtern …' oninput='filt()'>")
-    out.append("<table id='mods'><thead><tr><th>Datei</th><th>Kategorie</th><th>Status</th>"
-               "<th>Spielstände</th><th>Tray</th><th>Größe</th></tr></thead><tbody>")
+               + "<br>".join(f"<b>{e(tr(k))}</b>: {e(t(v))}" for k, v in STATUS_HELP.items())
+               + f"</div><input id='q' placeholder='{e(t('Filtern …'))}' oninput='filt()'>")
+    out.append("<table id='mods'><thead><tr>" + "".join(f"<th>{e(t(x))}</th>" for x in
+                                                       ("Datei", "Kategorie", "Status", "Spielstände", "Tray", "Größe"))
+               + "</tr></thead><tbody>")
     for r in rows:
         m = r["mod"]
         css = "s-" + r["status"].split(" ")[0]
-        out.append(f"<tr><td>{e(m.rel_path)}</td><td>{e(m.category)}</td><td class='{css}'>{e(r['status'])}</td>"
+        out.append(f"<tr><td>{e(m.rel_path)}</td><td>{e(tr(m.category))}</td><td class='{css}'>{e(tr(r['status']))}</td>"
                    f"<td>{e(', '.join(r['saves']))}</td><td>{r['tray'] or ''}</td><td>{_mb(m.size)}</td></tr>")
-    out.append(f"</tbody></table></div><script>{_JS}</script></body></html>")
+    out.append(f"</tbody></table></div><script>{_JS.replace(chr(39) + 'de' + chr(39), repr(lang))}</script></body></html>")
     with open(path, "w", encoding="utf-8") as f:
         f.write("".join(out))
     return path

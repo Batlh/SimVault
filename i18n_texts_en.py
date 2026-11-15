@@ -225,4 +225,58 @@ EN_CLI = {
     "verwendete Pfade anzeigen": "show the paths in use",
 }
 
-EN_REPORT = {}
+EN_REPORT = {
+    # Meldungen des Mods-Scanners (werden beim Anzeigen übersetzt)
+    "Mods-Ordner nicht gefunden: {}": "Mods folder not found: {}",
+    "Script-Mods (.ts4script) laden nur direkt im Mods-Ordner oder maximal 1 Unterordner tief.":
+        "Script mods (.ts4script) only load directly in the Mods folder or at most 1 subfolder deep.",
+    "Pakete laden nur bis maximal 5 Unterordner tief.": "Packages only load up to 5 subfolders deep.",
+    "Diese Dateien sind beschädigt oder unvollständig.": "These files are damaged or incomplete.",
+    "Diese Dateien sind 0 Byte groß.": "These files are 0 bytes.",
+    "Archive im Mods-Ordner werden vom Spiel nicht gelesen – entpacken und das Archiv löschen.":
+        "The game does not read archives in the Mods folder – unpack them and delete the archive.",
+    "Identische Dateien – eine davon reicht.": "Identical files – one of them is enough.",
+    "{} CAS-/Objekt-Ressource(n) stecken in mehreren Paketen – meist doppelt installierte CC (z. B. einzeln und zusätzlich in einem Merge).":
+        "{} CAS/object resource(s) are in several packages – usually CC installed twice (e.g. on its own and "
+        "again in a merge).",
+    "Tray": "Tray", "Haushalt": "Household", "Grundstück": "Lot", "Raum": "Room",
+    "kommt in einem Spielstand oder in der Bibliothek vor": "appears in a savegame or in the library",
+    "CAS-/Objekt-CC, die nirgends verwendet wird – Aufräumkandidat": "CAS/object CC that is used nowhere – clean-up candidate",
+    "Tuning/Gameplay – wird oft nicht im Spielstand gespeichert, also nicht automatisch ungenutzt":
+        "tuning/gameplay – often not stored in the savegame, so not automatically unused",
+    "Script-Mod – lässt sich nicht über den Spielstand prüfen": "script mod – cannot be checked via the savegame",
+    "Datei beschädigt oder leer": "file damaged or empty",
+    "# {} – Bericht vom {}": "# {} – report from {}",
+    "- Mods-Ordner: `{}`": "- Mods folder: `{}`", "- Spielstände: {}": "- Savegames: {}", "- Dateien: {}": "- Files: {}",
+    "{} von {} fehlenden Teilen gefunden.": "{} of {} missing parts found.",
+    "{} gemeinsames Teil ({} identisch, {} unterschiedlich). {}": "{} shared part ({} identical, {} different). {}",
+    "{} gemeinsame Teile ({} identisch, {} unterschiedlich). {}": "{} shared parts ({} identical, {} different). {}",
+    "Tray-Einträge": "Tray entries", "Größe (Bytes)": "Size (bytes)", "Ressourcen": "Resources",
+    "Probleme": "Problems", "Keine fehlende CC gefunden.": "No missing CC found.",
+    "Auf deinem PC gefunden": "Found on your PC",
+    "- **{} Teile** ({}): `{}`": "- **{} parts** ({}): `{}`", " **(Sims-Bezug)**": " **(Sims-related)**",
+    "- nicht durchsuchbar{}: `{}` ({})": "- not searchable{}: `{}` ({})",
+    "Bibliothek: Einträge mit fehlender CC": "Library: entries with missing CC",
+    " von **{}**": " by **{}**", "- Fehlt: {}": "- Missing: {}", " von <b>{}</b>": " by <b>{}</b>",
+    " (ursprünglich von {})": " (originally by {})", "- Beschreibung: {}": "- Description: {}",
+    "- CC-Link aus der Beschreibung: {}": "- CC link from the description: {}",
+    "{} Bericht": "{} report", "{} – Bericht": "{} – report", "Mods-Ordner: {}": "Mods folder: {}",
+    "Spielstände: {}": "Savegames: {}",
+    "Im Web suchen": "Search the web", "fehlende CC": "missing CC", "ungenutzte CC": "unused CC",
+    "CAS-Teile und Objekte, die in Spielständen oder der Bibliothek verwendet werden, aber in keinem installierten Paket stecken. Im Spiel erscheinen sie unsichtbar oder fehlen. Die ID hilft beim Wiederfinden (z. B. mit Sims 4 Studio).":
+        "CAS parts and objects used in savegames or the library but contained in no installed package. In the game "
+        "they are invisible or missing. The ID helps you find them again (e.g. with Sims 4 Studio).",
+    "{} von {} fehlenden Teilen gefunden. Durchsucht: {}": "{} of {} missing parts found. Searched: {}",
+    "Zurückholen ohne neue Suche: <code>py -3 main.py restore</code> (kopiert nach Mods/SimVault_wiederhergestellt, überschreibt nichts; einzelne auslassen mit <code>--ohne TEXT</code>)":
+        "Restore without a new search: <code>py -3 main.py restore</code> (copies to Mods/SimVault_wiederhergestellt, "
+        "overwrites nothing; leave single ones out with <code>--skip TEXT</code>)",
+    "Gespeicherte Haushalte, Grundstücke und Räume, deren CC fehlt. Der Ersteller ist die Galerie-ID – über ihn findest du meist die CC-Liste (Galerie, Tumblr, Patreon, YouTube).":
+        "Saved households, lots and rooms whose CC is missing. The creator is the gallery ID – through them you can "
+        "usually find the CC list (gallery, Tumblr, Patreon, YouTube).",
+    "Defekte Dateien neu suchen": "Find broken files again", "Suchen auf": "Search on",
+    "Datum unbekannt": "date unknown", "Keine fehlende CC gefunden. 🎉": "No missing CC found. 🎉",
+    "Fehlt: {}": "Missing: {}", "… {} weitere": "… {} more", "auch in:": "also in:",
+    "Nicht durchsuchbar – mit Sims-Bezug": "Not searchable – Sims-related",
+    "{} weitere nicht durchsuchbare Archive ohne erkennbaren Sims-Bezug":
+        "{} more unsearchable archives without visible Sims relation",
+}

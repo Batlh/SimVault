@@ -14,6 +14,7 @@ import subprocess
 import textwrap
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+os.environ["SIMVAULT_LANG"] = "de"      # Tests erwarten deutsche Texte, egal welche Sprache das System hat
 
 import dbpf
 import main
@@ -2377,3 +2378,69 @@ class CaptchaCheckTests(unittest.TestCase):
             self.assertEqual([r.source_id for r in results], ["fine"])
         finally:
             sources.enabled_sources = old
+
+
+class LanguageTests(unittest.TestCase):
+    def tearDown(self):
+        import i18n
+        i18n.set_language("de")
+
+    def test_every_cli_and_report_text_has_an_english_translation(self):
+        import ast
+        import i18n
+        root = os.path.join(os.path.dirname(__file__), "..")
+        for name in ("main.py", "report_generator.py"):
+            with open(os.path.join(root, name), encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "t":
+                    arg = node.args[0]
+                    values = [arg] if isinstance(arg, ast.Constant) else \
+                        [x for x in (getattr(arg, "body", None), getattr(arg, "orelse", None)) if isinstance(x, ast.Constant)]
+                    for v in values:
+                        self.assertIn(v.value, i18n.EN, f"{name}: keine Übersetzung für {v.value!r}")
+
+    def test_cli_speaks_english(self):
+        import io
+        import contextlib
+        tmp = tempfile.mkdtemp()
+        try:
+            cfg = os.path.join(tmp, "config.json")
+            with open(cfg, "w", encoding="utf-8") as f:
+                json.dump({"sims_folder": tmp}, f)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                main.main(["--config", cfg, "--lang", "en", "config"])
+            self.assertIn("Config file:", out.getvalue())
+            self.assertIn("missing", out.getvalue())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                main.main(["--config", cfg, "--lang", "de", "config"])
+            self.assertIn("Konfigurationsdatei:", out.getvalue())
+            args = main.build_parser().parse_args(["conflicts", "--clean"])
+            self.assertTrue(args.aufraeumen)                  # englische Option, gleiche Wirkung
+            args = main.build_parser().parse_args(["restore", "--skip", "Whims", "--no-backup"])
+            self.assertEqual((args.ohne, args.ohne_backup), (["Whims"], True))
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_report_in_english(self):
+        import i18n
+        from report_generator import generate_report
+        tmp = tempfile.mkdtemp()
+        try:
+            mods = os.path.join(tmp, "Mods")
+            os.makedirs(mods)
+            open(os.path.join(mods, "leer.package"), "wb").close()
+            scan = mod_folder_scanner.scan_mods_folder(mods)
+            i18n.set_language("en")
+            files = generate_report(scan, output_dir=os.path.join(tmp, "r"), formats=("html", "md", "json"))
+            html = open([f for f in files if f.endswith(".html")][0], encoding="utf-8").read()
+            md = open([f for f in files if f.endswith(".md")][0], encoding="utf-8").read()
+            data = json.load(open([f for f in files if f.endswith(".json")][0], encoding="utf-8"))
+            self.assertIn("<h2>Problems</h2>", html)
+            self.assertIn("These files are 0 bytes.", md)
+            self.assertIn("lang='en'", html)
+            self.assertEqual(data["probleme"][0]["art"], "Leer")       # JSON bleibt deutsch (wird wieder eingelesen)
+        finally:
+            shutil.rmtree(tmp)

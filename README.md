@@ -145,7 +145,9 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   check loops endlessly and Around the Sims has no search: these stay search links that open in the built-in browser (downloads there are still installed automatically). More sites can be added as full
   sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
 - 📱 **Mobile App** for remote analysis
-- 🌍 **More languages** — German and English are in; reports and the command line are still German only
+- 🌍 **More languages** — window, command line and reports speak German and English; the detailed explanations
+  from the analysis (conflict recommendations, repair hints, install reasons) are still German. Another language
+  = one more catalog like `EN` in `i18n.py` / `i18n_texts_en.py`
 
 ---
 
@@ -187,8 +189,13 @@ connection and creates the tables (`scans`, `mod_files`, `issues`, `missing_cc`)
 
 ## 🌍 Language
 
-The program window speaks **German and English** — *Settings → Language* (automatic = Windows language).
-Reports and the command line are German.
+The program window, the **command line** and the **reports** (HTML, Markdown, CSV) speak **German and English** —
+*Settings → Language* (automatic = Windows display language). The command line follows the same setting, or
+`--lang en` / `--lang de`, or the environment variable `SIMVAULT_LANG`. All options also have English names
+(`--clean`, `--apply`, `--skip`, `--thorough`, `--download`, `--whole-pc`, `--no-drives`, `--no-backup`,
+`--report`, `--only-missing`, `--exact`). The JSON report stays German because SimVault reads it back (`restore`).
+Still German: the detailed explanations from the analysis (conflict recommendations, repair hints, reasons when
+installing) and log messages.
 
 ## 🛠️ Command line
 
