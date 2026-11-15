@@ -2038,8 +2038,9 @@ class SiteParserTests(unittest.TestCase):
                 return self.renderer(url)
 
         self.assertEqual(fetch(Session(lambda u: "<p>echt</p>"), "https://x"), "<p>echt</p>")
-        page = fetch(Session(None), "https://x")                       # ohne Fenster: was kam, weitergeben
-        self.assertIn("Just a moment", page)
+        from sources.base import CheckRequired
+        with self.assertRaises(CheckRequired):                          # ohne Fenster: klar melden statt 0 Treffer
+            fetch(Session(None), "https://x")
 
     def test_download_result_falls_back_to_browser_page(self):
         import core
@@ -2305,3 +2306,74 @@ class DownloadGuardTests(unittest.TestCase):
         self.assertEqual(NewSea.access("Hairstyle(Donate)plus"), "Donate – nur angemeldet")
         self.assertEqual(NewSea.access("Hairstyle(TopStuff)"), "TopStuff – nur angemeldet")
         self.assertEqual(NewSea.access("StarfoldSweet+"), "")
+
+
+class CaptchaCheckTests(unittest.TestCase):
+    CHALLENGE = "<html><head><title>Just a moment...</title></head><body>cf_chl_opt</body></html>"
+
+    def test_is_challenge_ignores_normal_cloudflare_pages(self):
+        from sources.base import is_challenge
+        self.assertTrue(is_challenge(self.CHALLENGE))
+        self.assertFalse(is_challenge('<html><script src="/cdn-cgi/challenge-platform/h/b/scripts/x.js"></script>'
+                                      '<div class="result">Treffer</div></html>'))
+        self.assertFalse(is_challenge(""))
+
+    def test_fetch_raises_check_required_after_render(self):
+        from sources.sites import fetch
+        from sources.base import CheckRequired
+        page = self.CHALLENGE
+
+        class Session:
+            renderer = object()
+            renders = 0
+
+            def get(self, url):
+                return page
+
+            def render(self, url):
+                Session.renders += 1
+                return page
+
+        with self.assertRaises(CheckRequired) as ctx:
+            fetch(Session(), "https://example.org/suche")
+        self.assertEqual(ctx.exception.url, "https://example.org/suche")
+        self.assertEqual(Session.renders, 2)            # einmal abwarten, ob sich die Prüfung selbst löst
+
+        class Solved(Session):
+            def render(self, url):
+                return "<html>Treffer</html>"
+        self.assertEqual(fetch(Solved(), "https://example.org/suche"), "<html>Treffer</html>")
+
+    def test_web_search_reports_checks(self):
+        import core
+        from sources.base import CheckRequired, Source
+
+        class Blocked(Source):
+            id, name = "blocked", "Blockiert"
+
+            def search_url(self, query):
+                return "https://example.org/?q=" + query
+
+            def search(self, query, session=None):
+                raise CheckRequired("https://example.org/?q=" + query)
+
+        class Fine(Source):
+            id, name = "fine", "Gut"
+
+            def search(self, query, session=None):
+                from sources.base import SearchResult
+                return [SearchResult(title="Haar", url="https://example.com/haar")]
+
+        import sources
+        old = sources.enabled_sources
+        sources.enabled_sources = lambda cfg: [Blocked(), Fine()]
+        try:
+            checks = []
+            results, links, errors = core.web_search({}, "haar", session=object(), with_images=False, checks=checks)
+            self.assertEqual([r.title for r in results], ["Haar"])
+            self.assertEqual(checks, [{"id": "blocked", "name": "Blockiert", "url": "https://example.org/?q=haar"}])
+            self.assertIn("Prüfung nötig", errors[0][1])
+            results, _l, _e = core.web_search({}, "haar", session=object(), with_images=False, only={"fine"})
+            self.assertEqual([r.source_id for r in results], ["fine"])
+        finally:
+            sources.enabled_sources = old

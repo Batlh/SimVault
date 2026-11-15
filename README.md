@@ -144,7 +144,6 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
 - 🌐 **More result lists** — Patreon's search only finds creators, Simsworkshop's Cloudflare "are you human"
   check loops endlessly and Around the Sims has no search: these stay search links that open in the built-in browser (downloads there are still installed automatically). More sites can be added as full
   sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
-- 🛡️ **Captcha automation** — captchas are solved by hand in the built-in browser (done); automation optional later
 - 📱 **Mobile App** for remote analysis
 - 🌍 **More languages** — German and English are in; reports and the command line are still German only
 
@@ -168,6 +167,10 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   that page in the built-in browser and installs the file as soon as it arrives. *Download and install* fetches the file — if the site answers with a page instead (login, captcha,
   waiting time), it is opened in the built-in browser. Full sources can use `session.render(url)` to get the
   HTML of JavaScript-heavy pages from the built-in browser (headless browser support without Selenium).
+- **Captchas & "are you human" checks**: if a site blocks the search with such a check, SimVault no longer
+  just returns 0 results — it opens the check in the built-in browser so you can solve it, then searches that
+  site again by itself (or click *Search again*). The result line says "check needed" instead of staying silent.
+  SimVault never solves captchas itself.
 - **Secure login manager**: *Sources → Log in …* opens the site's login page in the built-in browser — 2FA codes
   and captchas are entered there by you. *Save login* stores only the cookies afterwards, **AES-256-GCM encrypted**
   (`%APPDATA%\SimVault\logins.bin`); the key is protected by the Windows user account (DPAPI), decrypted only in

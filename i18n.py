@@ -218,6 +218,8 @@ EN = {
     "Zeit": "Time", "Ergebnis": "Result", "Installieren": "Install", "Download-Ordner öffnen": "Open download folder",
     "Aus der Liste entfernen": "Remove from list", "Adresse oder Suchbegriff …": "Address or search term …",
     "Anmeldung speichern": "Save login",
+    "Erneut suchen": "Search again",
+    "Prüfung gelöst? Dann bei dieser Quelle noch einmal suchen.": "Check solved? Then search this source again.",
     "Der Download läuft über die Seite – im Browser starten, SimVault installiert die Datei danach selbst.":
         "The download runs through the site – start it in the browser, SimVault installs the file afterwards.", "{} Treffer.": "{} results.", "Suche „{}“ …": "Searching “{}” …",
     "heruntergeladen": "downloaded", "installiert": "installed", "übersprungen": "skipped", "Fehler": "Error",

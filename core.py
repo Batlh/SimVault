@@ -293,16 +293,22 @@ def web_session(cfg, renderer=None):
     return WebSession(store, renderer)
 
 
-def web_search(cfg, query, session=None, progress=None, should_stop=None, with_images=True):
+def web_search(cfg, query, session=None, progress=None, should_stop=None, with_images=True, only=None,
+               checks=None):
     """Fragt alle eingeschalteten Voll-Quellen ab. Gibt (Treffer, Links, Fehler) zurück:
     Treffer: Liste von SearchResult (extra["bild"] = Bilddaten), Links: {Name: URL} der Link-Quellen,
-    Fehler: [(Quelle, Meldung)]."""
+    Fehler: [(Quelle, Meldung)].
+    only: nur diese Quellen-IDs abfragen. checks: Liste, in die Quellen kommen, die eine Prüfung (Captcha)
+    verlangen – je {"id", "name", "url"}; die Oberfläche zeigt sie dem Nutzer im eingebauten Browser."""
     import sources
+    from sources.base import CheckRequired
     session = session or web_session(cfg)
     results, links, errors = [], {}, []
     for src in sources.enabled_sources(cfg):
         if should_stop and should_stop():
             break
+        if only is not None and src.id not in only:
+            continue
         url = src.search_url(query)
         if url:
             links[src.name] = url
@@ -312,6 +318,11 @@ def web_search(cfg, query, session=None, progress=None, should_stop=None, with_i
             progress(f"suche bei {src.name} …")
         try:
             found = src.search(query, session=session) or []
+        except CheckRequired as e:
+            errors.append((src.name, "Prüfung nötig (Captcha) – im eingebauten Browser lösen"))
+            if checks is not None:
+                checks.append({"id": src.id, "name": src.name, "url": e.url})
+            continue
         except Exception as e:          # eine Quelle darf die anderen nicht aufhalten
             errors.append((src.name, str(e)[:200]))
             continue

@@ -119,6 +119,11 @@ class WebPage(QWidget):
         state.open_in_browser.connect(self.open_url)
         state.login_requested.connect(self.login)
         state.runner.busy_changed.connect(lambda busy: not busy and self._next_install())
+        state.runner.busy_changed.connect(lambda busy: not busy and self._next_research())
+        self._query = ""
+        self._checks = []
+        self._research = []                   # Quellen, bei denen nach gelöster Prüfung neu gesucht wird
+        self._attempts = {}                   # Quelle -> wie oft schon nach einer Prüfung neu gesucht
 
     # -- Browser ---------------------------------------------------------------------
     def ensure_browser(self):
@@ -133,6 +138,7 @@ class WebPage(QWidget):
             lambda name, why: self.state.message.emit(f"Download {name} fehlgeschlagen: {why}"))
         self.browser_core.download_progress.connect(self.state.message.emit)
         self.browser_core.download_blocked.connect(self._download_blocked)
+        self.browser.check_passed.connect(self._check_passed)
         self.browser.login_saved.connect(lambda sid, n: self.state.message.emit(
             f"Anmeldung gespeichert ({n} Cookies, verschlüsselt)." if n else "Keine Cookies zum Speichern."))
         if self.browser_core.load_error:
@@ -186,9 +192,37 @@ class WebPage(QWidget):
         cfg = self.state.cfg
         session = core.web_session(cfg, renderer=self.renderer())
         self.info.setText(f"Suche „{query}“ …")
+        self._query, self._checks, self._research, self._attempts = query, [], [], {}
+        checks = self._checks
         self.state.runner.start(lambda progress, should_stop: core.web_search(cfg, query, session, progress,
-                                                                                should_stop),
+                                                                                should_stop, checks=checks),
                                 on_done=self._searched, on_error=lambda m: QMessageBox.warning(self, "Websuche", m))
+
+    # -- Prüfungen (Captcha) ---------------------------------------------------------
+    def _check_passed(self, source_id):
+        self._attempts[source_id] = self._attempts.get(source_id, 0) + 1
+        if source_id not in self._research:
+            self._research.append(source_id)
+        self._next_research()
+
+    def _next_research(self):
+        if not self._research or not self._query or self.state.runner.busy:
+            return
+        source_id = self._research.pop(0)
+        cfg, query = self.state.cfg, self._query
+        session = core.web_session(cfg, renderer=self.renderer())
+        checks = self._checks
+        self.state.runner.start(
+            lambda progress, should_stop: core.web_search(cfg, query, session, progress, should_stop,
+                                                          only={source_id}, checks=checks),
+            on_done=lambda result: self._merged(source_id, result),
+            on_error=lambda m: self.state.message.emit(f"Websuche: {m}"))
+
+    def _merged(self, source_id, result):
+        found, _links, errors = result
+        if self._query and found is not None:
+            results = [r for r in self.results if r.source_id != source_id] + found
+            self._searched((results, _links, errors), switch=False)
 
     def _show_links(self, links):
         while self.link_row.count():
@@ -202,7 +236,7 @@ class WebPage(QWidget):
             self.link_row.addWidget(b)
         self.link_row.addStretch(1)
 
-    def _searched(self, result):
+    def _searched(self, result, switch=True):
         results, _links, errors = result
         self.results = results
         self.list.clear()
@@ -219,7 +253,13 @@ class WebPage(QWidget):
         if errors:
             msg += " Nicht erreichbar: " + "; ".join(f"{n} ({m[:80]})" for n, m in errors)
         self.info.setText(msg)
-        self.tabs.setCurrentIndex(0)
+        pending = [c for c in self._checks if c["id"] not in self._research and self._attempts.get(c["id"], 0) < 3]
+        self._checks[:] = []
+        if pending:                           # Captcha zeigen, statt still keine Treffer zu liefern
+            self.ensure_browser().start_checks(pending)
+            self.tabs.setCurrentWidget(self.browser_tab)
+        elif switch:
+            self.tabs.setCurrentIndex(0)
 
     def _result(self, item=None):
         item = item or self.list.currentItem()

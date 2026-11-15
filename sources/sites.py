@@ -21,7 +21,7 @@ import html as htmlmod
 import logging
 from urllib.parse import quote, quote_plus, urljoin
 
-from .base import SearchResult, Source
+from .base import CheckRequired, SearchResult, Source, is_challenge
 
 log = logging.getLogger(__name__)
 
@@ -54,10 +54,15 @@ def fetch(session, url):
         log.info("%s normal nicht ladbar (%s) – versuche den eingebauten Browser", url, e)
     if not page or any(m in page[:20000] for m in BLOCKED_MARKERS):
         renderer = getattr(session, "renderer", None)
-        if renderer:
+        if not renderer:
+            if not page or is_challenge(page):
+                raise CheckRequired(url, "Seite blockt einfache Abrufe – im Programmfenster suchen (eingebauter Browser)")
+            return page
+        page = session.render(url)
+        if is_challenge(page):                  # einfache Prüfungen lösen sich nach ein paar Sekunden selbst
             page = session.render(url)
-        elif not page:
-            raise OSError("Seite blockt einfache Abrufe – im Programmfenster suchen (eingebauter Browser)")
+        if is_challenge(page):                  # sonst muss der Nutzer ran
+            raise CheckRequired(url)
     return page
 
 

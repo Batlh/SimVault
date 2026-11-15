@@ -177,6 +177,7 @@ class BrowserCore(QObject):
 class BrowserPane(QWidget):
     """Sichtbarer Browser mit Adresszeile und „Anmeldung speichern“."""
     login_saved = Signal(str, int)            # Quelle, Anzahl Cookies
+    check_passed = Signal(str)                # Quelle, deren Prüfung (Captcha) gelöst ist
 
     def __init__(self, core, parent=None):
         super().__init__(parent)
@@ -204,7 +205,14 @@ class BrowserPane(QWidget):
         self.hint.setObjectName("Muted")
         self.hint.setWordWrap(True)
         self.hint.hide()
-        lay.addWidget(self.hint)
+        hint_row = QHBoxLayout()
+        hint_row.addWidget(self.hint, 1)
+        self.retry = QPushButton("Erneut suchen")
+        self.retry.setToolTip("Prüfung gelöst? Dann bei dieser Quelle noch einmal suchen.")
+        self.retry.hide()
+        hint_row.addWidget(self.retry)
+        lay.addLayout(hint_row)
+        self.checks = []                      # offene Prüfungen: {"id", "name", "url"}
         self.view = QWebEngineView()
         self.view.setPage(QWebEnginePage(core.profile, self.view))
         lay.addWidget(self.view, 1)
@@ -215,6 +223,8 @@ class BrowserPane(QWidget):
         self.address.returnPressed.connect(self._go)
         self.view.urlChanged.connect(lambda u: self.address.setText(u.toString()))
         self.save_login.clicked.connect(self._save_login)
+        self.retry.clicked.connect(self._check_done)
+        self.view.loadFinished.connect(self._check_loaded)
 
     def open(self, url):
         self.view.load(QUrl(url))
@@ -229,6 +239,49 @@ class BrowserPane(QWidget):
         elif not text.startswith(("http://", "https://")):
             text = "https://" + text
         self.open(text)
+
+    # -- Prüfungen (Captcha), die eine Suche aufgehalten haben ----------------------------
+    def start_checks(self, checks):
+        """Zeigt die Prüfseiten nacheinander; ist eine gelöst, kommt check_passed(Quelle)."""
+        known = {c["id"] for c in self.checks}
+        self.checks += [c for c in checks if c["id"] not in known]
+        if self.checks:
+            self._show_check()
+
+    def _show_check(self):
+        c = self.checks[0]
+        rest = len(self.checks) - 1
+        self.hint.setText(f"{c['name']} will prüfen, ob du ein Mensch bist – bitte hier lösen. Danach sucht "
+                          f"SimVault dort von selbst noch einmal." + (f" (Danach noch {rest} weitere.)" if rest else ""))
+        self.hint.show()
+        self.retry.show()
+        self.open(c["url"])
+
+    def _check_loaded(self, ok):
+        if not ok or not self.checks:
+            return
+        host = base_domain(urlparse(self.view.url().toString()).hostname or "")
+        if host != base_domain(urlparse(self.checks[0]["url"]).hostname or ""):
+            return
+
+        def look(html):
+            from sources.base import is_challenge
+            if self.checks and not is_challenge(html):
+                self._check_done()
+        # kurz warten: nach dem Lösen leitet die Prüfseite selbst weiter
+        QTimer.singleShot(1500, lambda: self.view.page().toHtml(look))
+
+    def _check_done(self):
+        if not self.checks:
+            self.retry.hide()
+            return
+        c = self.checks.pop(0)
+        self.check_passed.emit(c["id"])
+        if self.checks:
+            self._show_check()
+        else:
+            self.retry.hide()
+            self.hint.setText(f"Prüfung bei {c['name']} erledigt – SimVault sucht dort noch einmal.")
 
     def start_login(self, source):
         """Öffnet die Anmeldeseite einer Quelle."""

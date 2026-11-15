@@ -18,6 +18,25 @@ from urllib.parse import quote_plus
 # Wird erhöht, wenn sich die Schnittstelle für Erweiterungen inkompatibel ändert.
 API_VERSION = 1
 
+# Erkennungszeichen einer Prüfseite („Bist du ein Mensch?“, Cloudflare & Co.) statt des eigentlichen Inhalts.
+# Bewusst ohne „challenge-platform“: das Skript bindet Cloudflare auch in ganz normale Seiten ein.
+CHALLENGE_MARKERS = ("<title>Just a moment", "cf_chl_opt", "cf-challenge", "Checking your browser",
+                     "Attention Required! | Cloudflare", "Verify you are human", "challenges.cloudflare.com/turnstile")
+
+
+def is_challenge(page):
+    """True, wenn page eine Prüfseite ist (Captcha/„Bist du ein Mensch?“) statt des Inhalts."""
+    head = (page or "")[:30000]
+    return any(m in head for m in CHALLENGE_MARKERS)
+
+
+class CheckRequired(OSError):
+    """Die Seite verlangt eine Prüfung (Captcha), die der Nutzer selbst im eingebauten Browser löst."""
+
+    def __init__(self, url, message=None):
+        super().__init__(message or "Seite verlangt eine Prüfung (Captcha) – im eingebauten Browser lösen")
+        self.url = url
+
 
 @dataclass
 class SearchResult:
