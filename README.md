@@ -146,12 +146,10 @@ no Python needed. Settings, reports and backups are stored in `%APPDATA%\SimVaul
   sources in `plugins/` (see `plugins/_beispiel_vollquelle.py`).
 - 🐞 **Debug log & bug reports** — log file, crash catcher and a "Report a bug" button that opens a pre-filled,
   anonymised GitHub issue (plan: [`docs/plan-fehlerberichte.md`](docs/plan-fehlerberichte.md))
-- 🧹 **Tidy up the repository** — move the 25 top-level modules into a `simvault/` package with sub-folders
-  (plan: [`docs/plan-aufraeumen.md`](docs/plan-aufraeumen.md))
 - 📱 **Mobile App** for remote analysis
 - 🌍 **More languages** — window, command line and reports speak German and English; the detailed explanations
   from the analysis (conflict recommendations, repair hints, install reasons) are still German. Another language
-  = one more catalog like `EN` in `i18n.py` / `i18n_texts_en.py`
+  = one more catalog like `EN` in `simvault/app/i18n.py` / `simvault/app/i18n_texts_en.py`
 
 ---
 
@@ -264,8 +262,21 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 Pull requests are welcome!  
 For major changes, please open an issue first to discuss what you would like to change.
+How the code is organised, how to run the tests and where new things go: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Please make sure to update tests as appropriate.
+### Project layout
+
+```
+main.py              command line            simvault_gui.py   program window
+simvault/app/        core, config, version, updater, languages
+simvault/analysis/   DBPF packages, savegames, missing CC, conflicts, repair, thumbnails
+simvault/finder/     finding CC on the PC, archives, game folder
+simvault/web/        web access, downloads, logins, sources (CC sites)
+simvault/storage/    reports, backups, database
+simvault/gui/        program window (Qt/PySide6)
+plugins/             your own sources        tests/            tests by area
+docs/                plans and file formats  scripts/          release notes
+```
 
 ---
 

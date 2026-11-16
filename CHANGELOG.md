@@ -6,6 +6,11 @@ zusammen mit der Liste aller Commits seit dem letzten Release.
 
 ## [Unveröffentlicht]
 
+### Aufgeräumt
+- Neue Ordnerstruktur: Die 25 Module aus dem Hauptordner liegen jetzt im Paket `simvault/` (`app/`, `analysis/`, `finder/`, `web/`, `storage/`, `gui/`). `main.py` und `simvault_gui.py` bleiben oben, Aufrufe ändern sich nicht. Ältere Erweiterungen mit `from sources.base import Source` laufen weiter.
+- Tests nach Bereichen aufgeteilt (`test_analysis.py`, `test_finder.py`, `test_web.py`, `test_sites.py`, `test_app.py`, gemeinsame Hilfen in `helpers.py`); neu: Tests bei jedem Push und Pull Request unter Windows und Linux.
+- Neu: `CONTRIBUTING.md` (Aufbau, Tests, neue Seiten, Texte, Commits) und `docs/formate.md` (DBPF, Spielstände, Bibliothek, Grundstücke/Räume).
+
 ### Neu
 - Konfliktprüfung: Überschneidungen im Mods-Ordner werden inhaltlich verglichen und eingeordnet (Doppelt, Überschneidung, Konflikt, Überschreibung), mit Spielständen und Bibliothek gegengeprüft und mit einer Empfehlung versehen. Neue Seite „Konflikte“ und Befehl `conflicts`.
 - Bei echten Konflikten schaut SimVault in die CAS-Teile: neueres CAS-Format = aktualisierte Fassung, unterschiedliche Namen unter einer ID = zwei CC, die sich verdecken, sonst Variante oder anders gespeicherte Kopie.

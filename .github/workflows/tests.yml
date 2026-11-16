@@ -1,0 +1,24 @@
+name: Tests
+
+# Schnelle Prüfung bei jedem Push und Pull Request – unter Windows und Linux.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pakete
+        run: pip install -r requirements.txt
+      - name: Tests
+        run: python -m unittest discover -s tests -v
