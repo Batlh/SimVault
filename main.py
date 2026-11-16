@@ -19,8 +19,8 @@ import sys
 import argparse
 import logging
 
-import config as cfg_mod
-from i18n import t, tr
+from simvault.app import config as cfg_mod
+from simvault.app.i18n import t, tr
 
 
 def _setup_logging(verbose):
@@ -41,7 +41,7 @@ def _check_folder(path, label):
 
 
 def cmd_config(cfg, args):
-    import archive_tools
+    from simvault.finder import archive_tools
     for key in ("sims_folder", "mods_folder", "savegames_folder", "tray_folder",
                 "game_folder", "backup_folder", "report_folder"):
         path = cfg.get(key, "")
@@ -56,7 +56,7 @@ def cmd_config(cfg, args):
 
 
 def _scan_mods(cfg):
-    from mod_folder_scanner import scan_mods_folder
+    from simvault.analysis.mod_folder_scanner import scan_mods_folder
     print(t("Scanne Mods-Ordner: {}", cfg["mods_folder"]))
     return scan_mods_folder(cfg["mods_folder"], progress=lambda i, n: _progress(t("{}/{} Dateien", i, n)))
 
@@ -122,7 +122,7 @@ def _print_conflicts(result):
 
 def _write_report(cfg, mod_scan, usage=None, saves=None, missing=None, missing_info=None, found=None,
                   conflicts=None):
-    from report_generator import generate_report
+    from simvault.storage.report_generator import generate_report
     files = generate_report(mod_scan, usage, saves, missing=missing, missing_info=missing_info, found=found,
                             conflicts=conflicts,
                             output_dir=cfg["report_folder"],
@@ -146,7 +146,7 @@ def cmd_scan(cfg, args):
 
 
 def cmd_analyze(cfg, args):
-    from savegame_analyzer import find_saves, analyze_usage
+    from simvault.analysis.savegame_analyzer import find_saves, analyze_usage
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
 
@@ -172,7 +172,7 @@ def cmd_analyze(cfg, args):
     missing = missing_info = None
     if not args.no_missing:
         missing, missing_info = _find_missing(cfg, mod_scan, saves, tray)
-    import core
+    from simvault.app import core
     conflicts = core.check_conflicts(cfg, mod_scan, id_usage, _progress)
 
     _print_summary(mod_scan, usage, missing)
@@ -185,7 +185,7 @@ def cmd_analyze(cfg, args):
 
 
 def _find_missing(cfg, mod_scan, saves, tray):
-    from missing_cc import find_missing, index_game_content
+    from simvault.analysis.missing_cc import find_missing, index_game_content
     known = set(mod_scan.id_lookup())
     game = cfg.get("game_folder")
     if game and os.path.isdir(game):
@@ -200,11 +200,11 @@ def _find_missing(cfg, mod_scan, saves, tray):
 
 
 def cmd_find(cfg, args):
-    from savegame_analyzer import find_saves
-    import cc_finder
+    from simvault.analysis.savegame_analyzer import find_saves
+    from simvault.finder import cc_finder
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
-    import archive_tools
+    from simvault.finder import archive_tools
     folders = cc_finder.search_locations(cfg, args.folders,
                                          drives=cfg.get("search_drives", True) and not args.ohne_laufwerke,
                                          whole_pc=args.ganzer_pc)
@@ -268,8 +268,8 @@ def cmd_find(cfg, args):
         print("\n" + t("Zurückholen ohne neue Suche: py -3 main.py restore   "
                        "(einzelne Funde auslassen: --ohne WickedWhims)"))
 
-    from savegame_analyzer import analyze_usage
-    import core
+    from simvault.analysis.savegame_analyzer import analyze_usage
+    from simvault.app import core
     if restored:
         mod_scan = _scan_mods(cfg)      # der Mods-Ordner hat sich geändert
     id_usage = {}
@@ -296,7 +296,7 @@ def _print_unreadable(unreadable):
 
 
 def _print_restored(cfg, restored, failed, skipped=None):
-    import cc_finder
+    from simvault.finder import cc_finder
     print("\n" + t("{} Datei(en) zurückgeholt nach {}", len(restored),
                     os.path.join(cfg["mods_folder"], cc_finder.RESTORE_SUBFOLDER)))
     if skipped:
@@ -327,7 +327,7 @@ def _backup_before_restore(cfg, args):
     """Sichert den Mods-Ordner als ZIP, bevor etwas zurückgeholt wird. Gibt False bei Fehler zurück."""
     if getattr(args, "ohne_backup", False):
         return True
-    from backup_manager import full_zip_backup
+    from simvault.storage.backup_manager import full_zip_backup
     print(t("Sichere zuerst den Mods-Ordner nach {} …", os.path.abspath(cfg["backup_folder"])))
     try:
         path = full_zip_backup(cfg["mods_folder"], cfg["backup_folder"])
@@ -342,8 +342,8 @@ def cmd_restore(cfg, args):
     """Holt die Funde aus dem letzten Suchbericht zurück – ohne erneute Suche."""
     import json
     import tempfile
-    import archive_tools
-    import cc_finder
+    from simvault.finder import archive_tools
+    from simvault.finder import cc_finder
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
     if args.bericht:
@@ -371,8 +371,8 @@ def cmd_restore(cfg, args):
 
 def cmd_conflicts(cfg, args):
     """Prüft Konflikte genau (gleich/unterschiedlich, genutzt?) und sortiert Überflüssiges auf Wunsch aus."""
-    from savegame_analyzer import find_saves, analyze_usage
-    import core
+    from simvault.analysis.savegame_analyzer import find_saves, analyze_usage
+    from simvault.app import core
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
     mod_scan = _scan_mods(cfg)
@@ -398,8 +398,8 @@ def cmd_conflicts(cfg, args):
 
 def cmd_repair(cfg, args):
     """Prüft CC und Spielstände auf Schäden; mit --ausfuehren wird repariert, was sicher geht."""
-    import core
-    import repair
+    from simvault.app import core
+    from simvault.analysis import repair
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
     print(t("Prüfe CC-Dateien und Spielstände (gründlich – das dauert) …") if args.gruendlich
@@ -430,7 +430,7 @@ def cmd_repair(cfg, args):
 
 
 def cmd_backup(cfg, args):
-    import core
+    from simvault.app import core
     if args.target == "list":
         backups = core.list_backups(cfg)
         if not backups:
@@ -483,7 +483,7 @@ def cmd_backup(cfg, args):
 
 def cmd_update(cfg, args):
     """Prüft auf GitHub, ob es eine neuere Version gibt; --laden lädt das ZIP herunter."""
-    import core
+    from simvault.app import core
     try:
         info = core.check_update()
     except (OSError, ValueError) as e:
@@ -506,7 +506,7 @@ def cmd_update(cfg, args):
 
 def cmd_db(cfg, args):
     """Prüft die Verbindung zur eingestellten Datenbank (SQLite, MySQL/MariaDB, PostgreSQL)."""
-    import database
+    from simvault.storage import database
     ok, message = database.test_connection(cfg["database"])
     print(message)
     return 0 if ok else 1
@@ -514,8 +514,8 @@ def cmd_db(cfg, args):
 
 def cmd_install(cfg, args):
     """Installiert heruntergeladene CC (Datei oder Archiv, auch eine URL) – ohne Doppeltes, ohne Überschreiben."""
-    import core
-    import downloads
+    from simvault.app import core
+    from simvault.web import downloads
     if not _check_folder(cfg["mods_folder"], "Mods-Ordner"):
         return 1
     for target in args.dateien:
@@ -554,7 +554,7 @@ def _ask(prompt, default=""):
 
 def cmd_setup(cfg, args):
     """Fragt die wichtigsten Einstellungen ab und speichert sie in config.json."""
-    import archive_tools
+    from simvault.finder import archive_tools
     raw = cfg_mod.load_config(args.config)
     print(t("SimVault einrichten – Enter übernimmt den Vorschlag in [Klammern].") + "\n")
 
@@ -565,7 +565,7 @@ def cmd_setup(cfg, args):
     raw["sims_folder"] = sims
 
     # 2. Spielordner (optional)
-    import game_locator
+    from simvault.finder import game_locator
     print("\n" + t("2) Spielordner (die Installation – macht die Erkennung fehlender CC genau). Suche …"))
     found = game_locator.find_game_folders(deep=True)
     for i, c in enumerate(found, 1):
@@ -626,7 +626,7 @@ def cmd_setup(cfg, args):
 
 def _opt(de, en):
     """Option deutsch und englisch; in der Hilfe steht die Fassung der eingestellten Sprache vorne."""
-    import i18n
+    from simvault.app import i18n
     return (en, de) if i18n.language() == "en" else (de, en)
 
 
@@ -718,7 +718,7 @@ def build_parser():
 
 def _choose_language(argv):
     """Sprache vor dem Aufbau der Hilfe festlegen: --lang, sonst ui_language aus der config.json, sonst System."""
-    import i18n
+    from simvault.app import i18n
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", default="config.json")
     pre.add_argument("--lang")

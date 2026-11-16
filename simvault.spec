@@ -9,7 +9,10 @@ a = Analysis(
     ["simvault_gui.py"],
     pathex=["."],
     datas=[("assets/simvault.png", "assets")],
-    hiddenimports=["sources.builtin", "sources.loader", "sources.base",
+    hiddenimports=["simvault.web.sources.builtin", "simvault.web.sources.loader", "simvault.web.sources.base",
+                   "simvault.web.sources.sites",
+                   # Übergang für ältere Erweiterungen („from sources.base import Source“)
+                   "sources",
                    # eingebauter Browser (Anmelden, Downloads, Seiten rendern) und verschlüsselte Anmeldungen
                    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
                    "cryptography.hazmat.primitives.ciphers.aead"],
