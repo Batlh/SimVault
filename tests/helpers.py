@@ -201,6 +201,12 @@ try:
 except ImportError:
     HAVE_QT = False
 
+try:
+    import cryptography  # noqa: F401  (für verschlüsselte Anmeldungen)
+    HAVE_CRYPTO = True
+except ImportError:
+    HAVE_CRYPTO = False
+
 import threading
 
 import http.server

@@ -62,6 +62,7 @@ class SourceTests(unittest.TestCase):
         self.assertIn("Cool+Hair", links["CurseForge"])
 
 
+@unittest.skipUnless(HAVE_CRYPTO, "cryptography nicht installiert")
 class SecureStoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -188,6 +189,7 @@ class DownloadInstallTests(unittest.TestCase):
             f.write("<html>Login</html>")
         self.assertIn("Webseite", downloads.install(html, self.mods, self.tray)["fehler"][0][1])
 
+    @unittest.skipUnless(HAVE_CRYPTO, "cryptography nicht installiert")
     def test_download_with_cookies_and_login_page(self):
         from simvault.web import secure_store
         from simvault.web import web_session

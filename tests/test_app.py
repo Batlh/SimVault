@@ -175,6 +175,7 @@ class UpdaterTests(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
+@unittest.skipUnless(HAVE_QT, "PySide6 nicht installiert")
 class GuiSmokeTests(unittest.TestCase):
     def test_window_and_pages_with_data(self):
         from simvault.app import core

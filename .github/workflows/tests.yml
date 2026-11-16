@@ -1,6 +1,8 @@
 name: Tests
 
-# Schnelle Prüfung bei jedem Push und Pull Request – unter Windows und Linux.
+# Schnelle Prüfung bei jedem Push und Pull Request: unter Windows mit allen Paketen (Programmfenster,
+# Anmeldungen), unter Linux nur mit der Standardbibliothek – so bleibt die Kommandozeile ohne Zusatzpakete
+# lauffähig (Tests für Fenster/Anmeldungen werden dort übersprungen).
 on:
   push:
     branches: ["**"]
@@ -18,7 +20,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Pakete
+      - name: Pakete (Windows, alles)
+        if: runner.os == 'Windows'
+        run: pip install -r requirements-gui.txt
+      - name: Pakete (Linux, ohne Zusatzpakete)
+        if: runner.os != 'Windows'
         run: pip install -r requirements.txt
       - name: Tests
         run: python -m unittest discover -s tests -v
