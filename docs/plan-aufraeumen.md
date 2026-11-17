@@ -1,6 +1,6 @@
 # Plan: Repository aufräumen und sortieren
 
-Stand: 15.11.2026 – geplant, noch nicht umgesetzt.
+Stand: 16.11.2026 – **umgesetzt** (Branch `aufraeumen`). Der Plan bleibt als Begründung stehen.
 
 ## Warum
 
