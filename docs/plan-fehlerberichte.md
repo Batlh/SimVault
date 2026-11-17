@@ -1,6 +1,6 @@
 # Plan: Debug-Log, Absturz-Fänger und Fehlerberichte für GitHub
 
-Stand: 15.11.2026 – geplant, noch nicht gebaut.
+Stand: 17.11.2026 – geplant, noch nicht gebaut. Pfade passen zur neuen Ordnerstruktur (PR #2). Tests kommen in `tests/test_app.py`.
 
 ## Warum
 
@@ -14,14 +14,14 @@ Wer einen Fehler melden will, hat nichts in der Hand. Ziel: Nutzer können mit z
   `NewSea._cache_path()` – am besten eine gemeinsame Funktion `paths.user_data_dir()`.
 - `RotatingFileHandler`: 5 Dateien × 1 MB, UTF-8, Format mit Zeit, Ebene, Modul.
 - Immer INFO; DEBUG über Einstellung `"debug_log": true` (Einstellungen → „Ausführliches Protokoll“) oder `-v`.
-- Eingebaut in `gui/app.py` (statt `basicConfig`) und `main.py::_setup_logging` (Konsole + Datei).
+- Eingebaut in `simvault/gui/app.py` (statt `basicConfig`) und `main.py::_setup_logging` (Konsole + Datei).
 - Kopfzeile pro Start: SimVault-Version, Windows-/Python-/Qt-Version, Sprache.
 
 ## 2. Absturz-Fänger
 
 - `sys.excepthook` und `threading.excepthook`: Stacktrace ins Log (ERROR), im Programmfenster ein Dialog
   „Unerwarteter Fehler“ mit „Fehler melden“.
-- `gui/worker.py::Task.run`: Ausnahmen bereits als `failed` – zusätzlich `log.exception(...)`.
+- `simvault/gui/worker.py::Task.run`: Ausnahmen bereits als `failed` – zusätzlich `log.exception(...)`.
 - Harte Abstürze (Segfault, z. B. Qt WebEngine): `faulthandler.enable(file=…)` in
   `logs/absturz.txt`. Beim Start: Datei vorhanden und nicht leer → Dialog
   „SimVault ist beim letzten Mal abgestürzt – Fehlerbericht ansehen?“, danach umbenennen (`absturz_<zeit>.txt`).
@@ -30,7 +30,7 @@ Wer einen Fehler melden will, hat nichts in der Hand. Ziel: Nutzer können mit z
 
 ## 3. „Fehler melden“
 
-- Neues Modul `bugreport.py` (ohne Qt, testbar):
+- Neues Modul `simvault/app/bugreport.py` (ohne Qt, testbar):
   - `collect(cfg, log_lines=300)` → Text: Version, System, Einstellungen (ohne Geheimnisse), letzte Log-Zeilen,
     letzter Absturz.
   - `anonymize(text)`: Windows-Benutzername und Home-Pfad → `%USERNAME%` / `~`; E-Mail-Adressen, Tokens,
@@ -57,5 +57,5 @@ Wer einen Fehler melden will, hat nichts in der Hand. Ziel: Nutzer können mit z
 - `collect` mit einer Beispiel-config: keine Geheimnisse, Version enthalten.
 - `issue_url`: richtige Kodierung, Fallback bei zu langem Text.
 - Absturz-Erkennung: Marker-Datei vorhanden → `previous_crash()` meldet es.
-- i18n: alle neuen Texte deutsch/englisch (Test „jede Vorlage übersetzt“ auf `bugreport.py` erweitern).
+- i18n: alle neuen Texte deutsch/englisch (Test „jede Vorlage übersetzt“ auf `simvault/app/bugreport.py` erweitern).
 - README-Abschnitt „Fehler melden“, CHANGELOG.
